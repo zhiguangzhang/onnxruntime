@@ -20,7 +20,7 @@ class Attention final : public CudaKernel {
   Status ComputeInternal(OpKernelContext* context) const override;
 
  private:
-  int num_heads_;     // number of attention heads
+  int num_heads_; // number of attention heads
 };
 
 }  // namespace cuda

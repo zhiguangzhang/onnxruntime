@@ -7,19 +7,19 @@
 namespace onnxruntime {
 namespace contrib {
 namespace cuda {
-  size_t getAttentionWorkspaceSize(size_t element_size, int batchsize, int num_heads, int head_size, int sequence_length);
+  size_t GetAttentionWorkspaceSize(size_t element_size, int batchsize, int num_heads, int head_size, int sequence_length);
 
-  void launchAttentionKernel(
-   const void* input,         // input tensor
-   const int* mask_index,     // mask index where each element is length of a sequence
-   void* output,              // output tensor
-   int batch_size,            // batch size (B)
-   int sequence_length,       // sequence length (S)
-   int num_heads,             // number of attention heads (N)
-   int head_size,             // hidden layer size per head (H)
-   void* workspace,           // work space
-   cublasHandle_t& cublas,    // cublas handle
-   const size_t element_size  // element size of input tensor
+  void LaunchAttentionKernel(
+   const void* input,         // Input tensor
+   const int* mask_index,     // Nask index where each element is length of a sequence
+   void* output,              // Output tensor
+   int batch_size,            // Batch size (B)
+   int sequence_length,       // Sequence length (S)
+   int num_heads,             // Number of attention heads (N)
+   int head_size,             // Hidden layer size per head (H)
+   void* workspace,           // Temporary buffer 
+   cublasHandle_t& cublas,    // Cublas handle
+   const size_t element_size  // Element size of input tensor
    );
 
 }  // namespace cuda

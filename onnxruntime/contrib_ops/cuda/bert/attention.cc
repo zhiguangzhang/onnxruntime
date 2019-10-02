@@ -38,12 +38,12 @@ Attention<T>::Attention(const OpKernelInfo& info) : CudaKernel(info) {
 
 template <typename T>
 Status Attention<T>::ComputeInternal(OpKernelContext* context) const {
-  // Validate input and output shapes:
-  //   Input 0: (batch_size, sequence_length, hidden_size)
-  //   Input 1: (hidden_size, 3 * hidden_size)
-  //   Input 2: (3 * hidden_size)
-  //   Input 3: (batch_size)
-  //   Output:  (batch_size, sequence_length, hidden_size)
+  // Input and output shapes:
+  //   Input 0 - input       : (batch_size, sequence_length, hidden_size)
+  //   Input 1 - weights     : (hidden_size, 3 * hidden_size)
+  //   Input 2 - bias        : (3 * hidden_size)
+  //   Input 3 - mask_index  : (batch_size)
+  //   Output                : (batch_size, sequence_length, hidden_size)
 
   const Tensor* input = context->Input<Tensor>(0); 
   const auto dims = input->Shape().GetDims();
@@ -94,7 +94,7 @@ Status Attention<T>::ComputeInternal(OpKernelContext* context) const {
   }
   if (static_cast<int>(mask_dims[0]) != batch_size) {
     return ORT_MAKE_STATUS(ONNXRUNTIME, INVALID_ARGUMENT,
-                           "Inputs 3 and 0 shall have same length of dimension 0");
+                           "Inputs 3 and 0 shall have same length at dimension 0");
   }
 
   TensorShape output_shape(dims);
@@ -103,7 +103,7 @@ Status Attention<T>::ComputeInternal(OpKernelContext* context) const {
   cublasHandle_t cublas = CublasHandle();
   const size_t element_size = sizeof(T);
 
-  // Here we use GEMM to process fully connection.
+  // Use GEMM for fully connection.
   int m = batch_size * sequence_length;
   int n = 3 * hidden_size;
   int k = hidden_size;
@@ -113,21 +113,22 @@ Status Attention<T>::ComputeInternal(OpKernelContext* context) const {
   CudaT one = ToCudaType<T>::FromFloat(1.0f);
   CudaT zero = ToCudaType<T>::FromFloat(0.0f);
 
-  // bias is (N), broadcast using B(N,M) = 1 * bias(N, 1) x ones(1, M) + 0 * B
+  // Bias shape is (N), broadcast using B(N, M) = 1 * bias(N, 1) x ones(1, M) + 0 * B.
+  // TODO: use custom kernel of expand to improve the performance.
   CUBLAS_CALL(cublasGemmHelper(cublas, CUBLAS_OP_N, CUBLAS_OP_N, n, m, 1, &one,
                                reinterpret_cast<const CudaT*>(bias->template Data<T>()), n,
                                GetConstOnes<CudaT>(m), 1,
                                &zero, reinterpret_cast<CudaT*>(gemm_buffer.get()), n));
 
-  // gemm, note that CUDA assumes col-major, so result(N,M) = 1 * weights x input + 1 x B
+  // Gemm, note that CUDA assumes col-major, so result(N, M) = 1 * weights x input + 1 x B.
   CUBLAS_CALL(cublasGemmHelper(cublas, CUBLAS_OP_N, CUBLAS_OP_N, n, m, k, &one,
                                reinterpret_cast<const CudaT*>(weights->template Data<T>()), n,
                                reinterpret_cast<const CudaT*>(input->template Data<T>()), k,
                                &one, reinterpret_cast<CudaT*>(gemm_buffer.get()), n));
 
-  size_t workSpaceSize = getAttentionWorkspaceSize(element_size, batch_size, num_heads_, head_size, sequence_length);
+  size_t workSpaceSize = GetAttentionWorkspaceSize(element_size, batch_size, num_heads_, head_size, sequence_length);
   auto temp_buffer = GetScratchBuffer<void>(workSpaceSize);
-  launchAttentionKernel(
+  LaunchAttentionKernel(
       reinterpret_cast<const CudaT*>(gemm_buffer.get()),
       mask_index->template Data<int>(),
       output->template MutableData<T>(),
