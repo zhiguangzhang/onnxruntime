@@ -14,7 +14,7 @@ namespace cuda {
 #define REGISTER_KERNEL_TYPED(T)                                 \
   ONNX_OPERATOR_TYPED_KERNEL_EX(                                 \
       FastGelu,                                                  \
-      kOnnxDomain,                                               \
+      kMSDomain,                                                 \
       1,                                                         \
       T,                                                         \
       kCudaExecutionProvider,                                    \
@@ -44,13 +44,11 @@ Status FastGelu<T>::ComputeInternal(OpKernelContext* ctx) const {
 
   size_t element_size = sizeof(T);
 
-#ifdef USE_CUDA_FP16
   launchGeluKernel(
     input->template Data<T>(),
     output->template MutableData<T>(),
     element_count,
     element_size);
-#endif
 
   return Status::OK();
 }

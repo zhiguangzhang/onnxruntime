@@ -6,16 +6,16 @@ namespace onnxruntime {
 namespace contrib {
 namespace cuda {
 
-void launchEmbedLayerNormKernel(void* output,                     // output tensor
+void LaunchEmbedLayerNormKernel(void* output,                     // output tensor
                                 void* mask_index,                 // output mask index
                                 const int* input_ids,             // input word IDs
                                 const int* segment_ids,           // input segment IDs
                                 const int* input_mask,            // input mask
-                                const float* gamma,               // weight for layer normalization
-                                const float* beta,                // bias for layer normalization
-                                const void* word_embedding,      // weights for word embeddings
-                                const void* position_embedding,  // weights for position embeddings
-                                const void* segment_embedding,   // weights for segment (like sentence) embeddings
+                                const void* gamma,                // weight for layer normalization
+                                const void* beta,                 // bias for layer normalization
+                                const void* word_embedding,       // weights for word embeddings
+                                const void* position_embedding,   // weights for position embeddings
+                                const void* segment_embedding,    // weights for segment (like sentence) embeddings
                                 const int hidden_size,            // hidden size (that is head_size * num_heads)
                                 int batch_size,                   // batch size
                                 int sequence_length,              // sequence length

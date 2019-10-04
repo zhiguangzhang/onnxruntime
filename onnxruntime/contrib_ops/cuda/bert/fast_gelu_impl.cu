@@ -33,10 +33,6 @@ namespace onnxruntime {
 namespace contrib {
 namespace cuda {
 
-//It uses FP16 functions, which are only supported on arch >= 5.3
-#ifdef USE_CUDA_FP16
-
-
 // constants for approximating the normal cdf
 constexpr float A = 0.5;
 
@@ -117,7 +113,6 @@ void launchGeluKernel(
     computeGelu(stream, element_count, reinterpret_cast<const float*>(input), reinterpret_cast<float*>(output));
   }
 }
-#endif
 
 }  // namespace cuda
 }  // namespace contrib

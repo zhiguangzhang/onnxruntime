@@ -67,6 +67,13 @@ __device__ __forceinline__ bool operator>(const half& lh, const half& rh) { retu
 __device__ __forceinline__ bool operator<(const half& lh, const half& rh) { return (float)lh < (float)rh; }
 __device__ __forceinline__ bool operator>=(const half& lh, const half& rh) { return (float)lh >= (float)rh; }
 __device__ __forceinline__ bool operator<=(const half& lh, const half& rh) { return (float)lh <= (float)rh; }
+
+// Half2 arithmetic
+__device__ __forceinline__ half2 operator+(const half2& lh, const half2& rh) { return __halves2half2(half((float)lh.x + (float)rh.x), half((float)lh.y + (float)rh.y));}
+__device__ __forceinline__ half2 operator-(const half2& lh, const half2& rh) { return __halves2half2(half((float)lh.x - (float)rh.x), half((float)lh.y - (float)rh.y));}
+__device__ __forceinline__ half2 operator*(const half2& lh, const half2& rh) { return __halves2half2(half((float)lh.x * (float)rh.x), half((float)lh.y * (float)rh.y));}
+__device__ __forceinline__ half2 operator/(const half2& lh, const half2& rh) { return __halves2half2(half((float)lh.x / (float)rh.x), half((float)lh.y / (float)rh.y));}
+
 #endif
 
 template <typename T>

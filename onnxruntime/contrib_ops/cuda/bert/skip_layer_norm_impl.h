@@ -7,19 +7,18 @@ namespace onnxruntime {
 namespace contrib {
 namespace cuda {
 
-#ifdef USE_CUDA_FP16
-void launchSkipLayerNormKernel(
+void LaunchSkipLayerNormKernel(
     void* output,              // output tensor
     const void* input,         // input tensor
     const void* skip,          // skip tensor
-    const float* gamma,        // weight tensor
-    const float* beta,         // bias tensor
+    const void* gamma,         // Layer normalization gamma tensor
+    const void* beta,          // Layer normalization beta tensor
     const int batch_size,      // batch size (B)
     const int hidden_size,     // hidden size, it is the leading dimension (ld)
     const int element_count,   // number of elements in input tensor
     const size_t element_size  // element size of input tensor
 );
-#endif
+
 }  // namespace cuda
 }  // namespace contrib
 }  // namespace onnxruntime

@@ -17,15 +17,6 @@ class EmbedLayerNorm final : public CudaKernel {
  public:
   EmbedLayerNorm(const OpKernelInfo& op_kernel_info);
   Status ComputeInternal(OpKernelContext* ctx) const override;
-
- private:
-  size_t gamma_size_;
-  size_t beta_size_;
-
-  IAllocatorUniquePtr<float> gamma_data_;               // gpu copy of weight
-  IAllocatorUniquePtr<float> beta_data_;                // gpu copy of bias
-
-  int64_t hidden_size_;
 };
 
 }  // namespace cuda

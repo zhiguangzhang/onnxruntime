@@ -35,22 +35,29 @@ namespace onnxruntime {
 namespace contrib {
 namespace cuda {
 
-/*
- It uses FP16 functions (like hrsqrt and __hadd2), which are only supported on arch >= 5.3
-*/
-#ifdef USE_CUDA_FP16
-
 template <typename T>
-__device__ inline T rsqrt(const T& x);
+__device__ inline T Rsqrt(const T& x);
 
 template <>
-__device__ inline float rsqrt(const float& x) {
+__device__ inline float Rsqrt(const float& x) {
   return rsqrtf(x);
 }
 
 template <>
-__device__ inline half rsqrt(const half& x) {
+__device__ inline half Rsqrt(const half& x) {
+#if __CUDA_ARCH__ >= 530 || !defined(__CUDA_ARCH__)
   return hrsqrt(x);
+#else
+  return half(rsqrtf(float(x)));
+#endif
+}
+
+__device__ inline half2 AddHalf2(const half2 a, const half2 b) {
+#if __CUDA_ARCH__ >= 530 || !defined(__CUDA_ARCH__)
+  return __hadd2(a, b);
+#else
+  return __halves2half2(__hadd(a.x, b.x), __hadd(a.y, b.y));
+#endif
 }
 
 struct KeyValuePairSum {
@@ -61,31 +68,31 @@ struct KeyValuePairSum {
   __device__ inline cub::KeyValuePair<half, half> operator()(const cub::KeyValuePair<half, half>& a, const cub::KeyValuePair<half, half>& b) {
     const half2 a2 = __halves2half2(a.key, a.value);
     const half2 b2 = __halves2half2(b.key, b.value);
-    const half2 res = __hadd2(a2, b2);
+    const half2 res = AddHalf2(a2, b2);
     return cub::KeyValuePair<half, half>(res.x, res.y);
   }
 
   __device__ inline cub::KeyValuePair<half2, half2> operator()(const cub::KeyValuePair<half2, half2>& a, const cub::KeyValuePair<half2, half2>& b) {
-    return cub::KeyValuePair<half2, half2>(__hadd2(a.key, b.key), __hadd2(a.value, b.value));
+    return cub::KeyValuePair<half2, half2>(AddHalf2(a.key, b.key), AddHalf2(a.value, b.value));
   }
 };
 
 template <typename T, int TPB>
-__device__ inline void layerNorm(
-    const cub::KeyValuePair<T, T>& threadData, const int ld, const int offset, const float* beta, const float* gamma, T* output) {
-  // Assuming threadData is already divided by ld
+__device__ inline void LayerNorm(
+    const cub::KeyValuePair<T, T>& thread_data, const int ld, const int offset, const T* beta, const T* gamma, T* output) {
+  // Assuming thread_data is already divided by ld
 
   using BlockReduce = cub::BlockReduce<cub::KeyValuePair<T, T>, TPB>;
   __shared__ typename BlockReduce::TempStorage temp_storage;
   __shared__ T mu;      // mean
   __shared__ T rsigma;  // 1 / std.dev.
 
-  KeyValuePairSum pairSum;
-  const auto sumKV = BlockReduce(temp_storage).Reduce(threadData, pairSum);
+  KeyValuePairSum pair_sum;
+  const auto sum_kv = BlockReduce(temp_storage).Reduce(thread_data, pair_sum);
 
   if (threadIdx.x == 0) {
-    mu = sumKV.key;
-    rsigma = rsqrt(sumKV.value - mu * mu);
+    mu = sum_kv.key;
+    rsigma = Rsqrt(sum_kv.value - mu * mu);
   }
   __syncthreads();
 
@@ -99,9 +106,9 @@ __device__ inline void layerNorm(
 }
 
 template <typename T, int TPB>
-__device__ inline void layerNormSmall(const T val, const cub::KeyValuePair<T, T>& threadData, const int ld, const int idx,
-                                      const float* beta, const float* gamma, T* output) {
-  // Assuming threadData is already divided by ld
+__device__ inline void LayerNormSmall(const T val, const cub::KeyValuePair<T, T>& thread_data, const int ld, const int idx,
+                                      const T* beta, const T* gamma, T* output) {
+  // Assuming thread_data is already divided by ld
   // Small settings: the block covers the leading dimension TPB >= ld. The input
   // value is available in a register
 
@@ -110,12 +117,12 @@ __device__ inline void layerNormSmall(const T val, const cub::KeyValuePair<T, T>
   __shared__ T mu;      // mean
   __shared__ T rsigma;  // 1 / std.dev.
 
-  KeyValuePairSum pairSum;
-  const auto sumKV = BlockReduce(temp_storage).Reduce(threadData, pairSum);
+  KeyValuePairSum pair_sum;
+  const auto sum_kv = BlockReduce(temp_storage).Reduce(thread_data, pair_sum);
 
   if (threadIdx.x == 0) {
-    mu = sumKV.key;
-    rsigma = rsqrt(sumKV.value - mu * mu);
+    mu = sum_kv.key;
+    rsigma = Rsqrt(sum_kv.value - mu * mu);
   }
   __syncthreads();
 
@@ -125,7 +132,6 @@ __device__ inline void layerNormSmall(const T val, const cub::KeyValuePair<T, T>
     output[idx] = g * (val - mu) * rsigma + b;
   }
 }
-#endif
 
 }  // namespace cuda
 }  // namespace contrib
