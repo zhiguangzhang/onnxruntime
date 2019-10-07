@@ -1,19 +1,17 @@
-################
-# v5 - move gamma, beta to input
-#
+#-------------------------------------------------------------------------
+# Copyright (c) Microsoft Corporation.  All rights reserved.
+# Licensed under the MIT License.
+#--------------------------------------------------------------------------
 import onnx
 import sys
 import argparse
+import numpy as np
 
 from onnx import ModelProto
 from onnx import TensorProto
 from google.protobuf import text_format
-
 from onnx import numpy_helper
 from collections import deque
-import numpy as np
-
-VERBOSE = True
 
 class OnnxModel:
     def __init__(self, model):
@@ -62,12 +60,24 @@ class OnnxModel:
     def add_input(self, input):
         self.model.graph.input.extend([input])
 
+    @staticmethod
+    def replace_node_input(node, old_input_name, new_input_name):
+        assert(isinstance(old_input_name, str))
+        assert(isinstance(new_input_name, str))
+        for j in range(len(node.input)):
+            if node.input[j] == old_input_name:
+                node.input[j] = new_input_name
+
+    def replace_input_of_all_nodes(self, old_input_name, new_input_name):
+        for node in self.model.graph.node:
+            OnnxModel.replace_node_input(node, old_input_name, new_input_name)
+
     def get_initializer(self,name):
         for tensor in self.model.graph.initializer:
             if tensor.name == name:
                 return tensor
         return None
-        
+
     def nodes_by_type(self, op_type):
         return [n for n in self.model.graph.node if n.op_type == op_type]
 
@@ -129,7 +139,7 @@ class OnnxModel:
         if len(unused_nodes) > 0:
             print("Removed unused constant nodes:", len(unused_nodes))
 
-    def get_subgraph_nodes(self, root_node, stop_nodes, input_name_to_node = None):
+    def get_subgraph_nodes(self, root_node, stop_nodes, input_name_to_node=None):
         if input_name_to_node is None:
             input_name_to_node = self.input_name_to_nodes()
 
@@ -173,16 +183,15 @@ class OnnxModel:
         for node in graph.node:
             if node.op_type == 'Constant':
                 for att in node.attribute:
-                    if att.name == 'value' and att.t.data_type==1:
+                    if att.name == 'value' and att.t.data_type == 1:
                         att.CopyFrom(onnx.helper.make_attribute("value", numpy_helper.from_array(numpy_helper.to_array(att.t).astype(np.float16))))
             if node.op_type == 'Cast':
                 for att in node.attribute:
                     if att.name == 'to' and att.i == 1:
-                        print(att.name)
                         att.CopyFrom(onnx.helper.make_attribute("to", 10))
    
-    # create a new name for node 
-    def create_node_name(self, op_type, name_prefix = None):
+    # create a new name for node
+    def create_node_name(self, op_type, name_prefix=None):
         nodes = self.nodes_by_type(op_type)
 
         #TODO: check duplication
@@ -197,7 +206,7 @@ class OnnxModel:
                 return input
         return None
 
-    def get_parent_nodes_and_inputs(self, node, stop_nodes, output_name_to_node = None):
+    def get_parent_nodes_and_inputs(self, node, stop_nodes, output_name_to_node=None):
         if output_name_to_node is None:
             output_name_to_node = self.output_name_to_nodes()
 
@@ -222,7 +231,6 @@ class OnnxModel:
                 if input in output_name_to_node:
                     dq.appendleft(output_name_to_node[input])
                 elif input not in unique_inputs:
-                    print("input", input)
                     unique_inputs.append(input)
 
         return unique_nodes, unique_inputs
@@ -237,7 +245,7 @@ class OnnxModel:
                 parents.append(output_name_to_node[input])
         return parents
 
-    def find_first_parent_by_type(self, node, parent_type, output_name_to_node=None, recursive = True):
+    def find_first_parent_by_type(self, node, parent_type, output_name_to_node=None, recursive=True):
         if output_name_to_node is None:
             output_name_to_node = self.output_name_to_nodes()
             
@@ -254,9 +262,57 @@ class OnnxModel:
                     dq.appendleft(parent)
 
         return None
+
+    @staticmethod
+    def input_index(node_output, child_node):
+        index = 0
+        for input in child_node.input:
+            if input == node_output:
+                return index
+            index += 1
+        return -1
+
+    @staticmethod
+    def replace_node_inputs(node, old_input, new_inputs):
+        inputs = []
+        for input in node.input:
+            if input == old_input:
+                for i in new_inputs:
+                    inputs.append(i)
+            else:
+                inputs.append(input)
+
+        #TODO: copy node name and attributes
+        new_node = onnx.helper.make_node(node.op_type,
+            inputs=inputs,
+            outputs=node.output)
+        new_node.name = node.name
+        new_node.attribute = node.attribute
+        return new_node
+
+    @staticmethod
+    def delete_and_skip_node(nodes, node, nodes_to_remove, nodes_to_add):
+        nodes_to_remove.append(node)
+
+        all_nodes = nodes_to_add + [n for n in nodes if n not in nodes_to_remove]
+
+        # for all children, change their input to parent of current node.
+        for node_output in node.output:
+            for n in all_nodes:
+                if node_output in n.input:
+                    if len(node.input) == 1:
+                        OnnxModel.replace_node_input(n, node_output, node.input[0])
+                    else:
+                        new_node = OnnxModel.replace_node_inputs(n, node_output, node.input)
+                        nodes_to_add.append(new_node)
+                        if n in nodes:
+                            nodes_to_remove.append(n)
+                        else:
+                            nodes_to_add.remove(n)
+
 class BertOnnxModel(OnnxModel):
     def __init__(self, model, normalize_name, num_heads, head_size, batch_size, sequence_length):
-        assert(normalize_name == "LayerNormalization" or normalize_name == "SkipLayerNormalization" or normalize_name == "Normalize")
+        assert(normalize_name == "LayerNormalization" or normalize_name == "SkipLayerNormalization")
         assert(batch_size >= 0)
         assert(num_heads > 0)
         assert(head_size > 0)
@@ -277,7 +333,7 @@ class BertOnnxModel(OnnxModel):
         return self.nodes_by_type(self.normalize_name)
 
     def normalize_children_types(self):
-        if self.normalize_name == "Normalize" or self.normalize_name == "LayerNormalization":
+        if self.normalize_name == "LayerNormalization":
             return ['Add', 'MatMul', 'MatMul', 'MatMul']
 
         assert(self.normalize_name == "SkipLayerNormalization")
@@ -314,8 +370,7 @@ class BertOnnxModel(OnnxModel):
         v_transpose = None
         for transpose_node in transpose_nodes:
             transpose_children = input_name_to_node[transpose_node.output[0]]
-            if len(transpose_children) == 1 and transpose_children[0].op_type == 'MatMul' \
-               and input_index(transpose_node.output[0], transpose_children[0]) == 0:
+            if len(transpose_children) == 1 and transpose_children[0].op_type == 'MatMul' and OnnxModel.input_index(transpose_node.output[0], transpose_children[0]) == 0:
                 qxk = transpose_children[0]
                 q_transpose = output_name_to_node[qxk.input[0]]
                 k_transpose = output_name_to_node[qxk.input[1]]
@@ -401,24 +456,19 @@ class BertOnnxModel(OnnxModel):
 
         subgraph_nodes, input_nodes = self.get_parent_nodes_and_inputs(reshape_node_after_att, [normalize_node], output_name_to_node)
 
-        #do not remove now since mask processing node will be removed.
-        #self.remove_node(reshape_node_after_att)
-        #self.remove_nodes(subgraph_nodes)
         nodes_to_remove.extend(subgraph_nodes)
         nodes_to_remove.extend([reshape_node_after_att])
 
         input_nodes = [n for n in input_nodes if self.get_initializer(n) is None]
         if len(input_nodes) != 1:
             print("Failed. Current normalize node output", normalize_node.output[0])
-            raise Exception("There should be one input node linked to attention. Got:", input_nodes)
+            raise Exception("There should be one graph input (without initializer) linked to attention. Got:", input_nodes)
         # Here we assume that attention will get only one graph input: the mask
-        
         self.set_mask_input(input_nodes[0])
 
         attention_node_name = self.create_node_name('Attention')
 
-        weight = onnx.helper.make_tensor(
-            name=attention_node_name + '_qkv_weight',
+        weight = onnx.helper.make_tensor(name=attention_node_name + '_qkv_weight',
             data_type=TensorProto.FLOAT,
             dims=[self.hidden_size, 3 * self.hidden_size],
             vals=qkv_weight.flatten().tolist())
@@ -427,8 +477,7 @@ class BertOnnxModel(OnnxModel):
         weight_input = onnx.helper.make_tensor_value_info(weight.name, TensorProto.FLOAT, [self.hidden_size, 3 * self.hidden_size])
         self.add_input(weight_input)
 
-        bias = onnx.helper.make_tensor(
-            name=attention_node_name + '_qkv_bias',
+        bias = onnx.helper.make_tensor(name=attention_node_name + '_qkv_bias',
             data_type=TensorProto.FLOAT,
             dims=[3 * self.hidden_size],
             vals=qkv_bias.flatten().tolist())
@@ -438,20 +487,16 @@ class BertOnnxModel(OnnxModel):
         self.add_input(bias_input)
 
         
-        attention_node = onnx.helper.make_node(
-            'Attention',
+        attention_node = onnx.helper.make_node('Attention',
             inputs=[normalize_node.output[0], attention_node_name + '_qkv_weight', attention_node_name + '_qkv_bias', self.mask_input],
             outputs=[reshape_node_after_att.output[0]],
-            name=attention_node_name
-            )
+            name=attention_node_name)
         attention_node.domain = "com.microsoft"
-        attention_node.attribute.extend([
-            onnx.helper.make_attribute("num_heads", self.num_heads)
-            ])
+        attention_node.attribute.extend([onnx.helper.make_attribute("num_heads", self.num_heads)])
 
         self.add_node(attention_node)
 
-    def update_graph(self, verbose=VERBOSE):
+    def update_graph(self, verbose=False):
         graph = self.model.graph
 
         remaining_input_names = []
@@ -491,21 +536,21 @@ class BertOnnxModel(OnnxModel):
             print("  input", [input.name for input in graph.input])
             print(" output", [output.name for output in graph.output])
 
-    def fuse_attention(self):
+    def fuse_attention(self, verbose=False):
         normalize_nodes = self.nodes_by_type(self.normalize_name)
         nodes_to_remove = []
         for normalize_node in normalize_nodes:
             self.transform_attention(normalize_node, nodes_to_remove)
         self.remove_nodes(nodes_to_remove)
-        self.update_graph()
+        self.update_graph(verbose)
 
-    def fuse_gelu(self):
+    def fuse_gelu(self, gelu_name = 'FastGelu'):
         nodes = self.nodes()
         input_name_to_node = self.input_name_to_nodes()
         output_name_to_node = self.output_name_to_nodes()
 
-        nodes_to_remove=[]
-        nodes_to_add=[]
+        nodes_to_remove = []
+        nodes_to_add = []
 
         for node in self.get_normalize_nodes():
 
@@ -538,26 +583,25 @@ class BertOnnxModel(OnnxModel):
                 continue
 
             nodes_to_remove.extend(subgraph_nodes)
-            gelu_node = onnx.helper.make_node(
-                'FastGelu',
+            gelu_node = onnx.helper.make_node(gelu_name,
                 inputs=[add_node.output[0]],
-                outputs=[matmul_2.input[0]]
-                )
-            gelu_node.domain = "com.microsoft"
+                outputs=[matmul_2.input[0]])
+            if gelu_name == "FastGelu": #Gelu in this branch still use Onnx domain
+                gelu_node.domain = "com.microsoft"
             nodes_to_add.append(gelu_node)
 
         self.remove_nodes(nodes_to_remove)
         self.add_nodes(nodes_to_add)
         self.remove_unused_constant()
 
-    def fuse_embed_layer(self):
+    def fuse_embed_layer(self, verbose=False):
         nodes = self.nodes()
         input_name_to_node = self.input_name_to_nodes()
         output_name_to_node = self.output_name_to_nodes()
         mask_input_name = self.mask_input
 
-        nodes_to_remove=[]
-        nodes_to_add=[]
+        nodes_to_remove = []
+        nodes_to_add = []
 
         normalize_node = None
         for node in self.get_normalize_nodes():
@@ -568,48 +612,55 @@ class BertOnnxModel(OnnxModel):
         if normalize_node is None:
             raise Exception("did not find node with op_type", self.normalize_name)
 
-        #This is the first normalize normalize_node
-        add_node = self.find_first_parent_by_type(normalize_node, 'Add', output_name_to_node, recursive = False)
-        segment_embedding_gather = self.find_first_parent_by_type(normalize_node, 'Gather', output_name_to_node, recursive = False)
+        # If it is LayerNormalization, skip the first Add node before it.
+        skip_normalize = normalize_node
+        if (normalize_node.name == "LayerNormalization"):
+            skip_normalize = self.find_first_parent_by_type(add_node, 'Add', output_name_to_node, recursive = False)
+            assert(skip_normalize is not None)
+
+        #This is the first normalize node
+        add_node = self.find_first_parent_by_type(skip_normalize, 'Add', output_name_to_node, recursive = False)
+        assert(add_node is not None)
+
+        segment_embedding_gather = self.find_first_parent_by_type(skip_normalize, 'Gather', output_name_to_node, recursive = False)
+        assert(segment_embedding_gather is not None)
 
         parents = self.get_parents(add_node, output_name_to_node)
         if len(parents) == 2 and parents[0].op_type == 'Gather' and parents[1].op_type == 'Gather':
             word_embedding_gather = parents[0]
             position_embedding_gather = parents[1]
+        else:
+            raise Exception("Expect to have two Gather node as parent of Add node")
 
         input_ids = word_embedding_gather.input[1]
         segment_ids = segment_embedding_gather.input[1]
 
         nodes_to_remove, inputs = self.get_parent_nodes_and_inputs(normalize_node, [], output_name_to_node)
 
-        embed_node = onnx.helper.make_node(
-                        'EmbedLayerNormalization',
+        embed_node = onnx.helper.make_node('EmbedLayerNormalization',
                         inputs=[input_ids, segment_ids, mask_input_name, 
                                 word_embedding_gather.input[0], position_embedding_gather.input[0], segment_embedding_gather.input[0],
                                 normalize_node.input[2], normalize_node.input[3]], # gamma and beta
                         outputs=["embed_output", "mask_idx"],
-                        name="EmbedLayer"
-                    )
+                        name="EmbedLayer")
         embed_node.domain = "com.microsoft"
-        #embed_node.attribute.extend(normalize_node.attribute) #copy gamma and beta attributes from normalize node
         # store embed node for other processing
         self.embed_node = embed_node
 
         nodes_to_add.extend([embed_node])
         nodes_to_remove.append(normalize_node)
 
-        for n in nodes:
-            replace_input(n, normalize_node.output[0], 'embed_output')
-            replace_input(n, mask_input_name, 'mask_idx')
+        self.replace_input_of_all_nodes(normalize_node.output[0], 'embed_output')
+        self.replace_input_of_all_nodes(mask_input_name, 'mask_idx')
 
-        # Remove Cast and ReduceSum for mask, and link mask_idx to attention node directly.
+        # Link mask_idx to Attention node directly, and remove other nodes in between.
         for n in nodes:
             if 'mask_idx' in n.input and n.op_type != 'Attention':
                 delete_and_skip_node(nodes, n, nodes_to_remove, nodes_to_add)
         
         self.remove_nodes(nodes_to_remove)
         self.add_nodes(nodes_to_add)
-        self.update_graph()
+        self.update_graph(verbose)
 
     def change_input_to_int32(self):
         graph = self.graph()
@@ -624,14 +675,12 @@ class BertOnnxModel(OnnxModel):
                 print("input", input.name)
                 new_graph_inputs.append(input_map[input.name])
 
-        graph_def = onnx.helper.make_graph(
-                        graph.node,
+        graph_def = onnx.helper.make_graph(graph.node,
                         'int32 inputs',
                         new_graph_inputs,
                         graph.output,
                         initializer=graph.initializer,
-                        value_info=graph.value_info
-                    )
+                        value_info=graph.value_info)
 
         # replace model
         self.model = onnx.helper.make_model(graph_def, producer_name='bert model optimizer')
@@ -666,18 +715,14 @@ class BertOnnxModel(OnnxModel):
             need_cast = graph_input.type.tensor_type.elem_type == TensorProto.INT64
             if need_cast:
                 cast_output = input + '_cast32'
-                cast_node = onnx.helper.make_node(
-                    'Cast',
+                cast_node = onnx.helper.make_node('Cast',
                     inputs=[input],
-                    outputs=[cast_output]
-                    )
-                cast_node.attribute.extend([
-                    onnx.helper.make_attribute("to", int(TensorProto.INT32))
-                    ])
+                    outputs=[cast_output])
+                cast_node.attribute.extend([onnx.helper.make_attribute("to", int(TensorProto.INT32))])
                 nodes_to_add.extend([cast_node])
                 for n in model.graph.node:
                     if input in n.input:
-                        replace_input(n, input, input + '_cast32')
+                        OnnxModel.replace_node_input(n, input, input + '_cast32')
 
         model.graph.node.extend(nodes_to_add)
 
@@ -688,19 +733,19 @@ class BertOnnxModel(OnnxModel):
         input_name_to_node = self.input_name_to_nodes()
         output_name_to_node = self.output_name_to_nodes()
 
-        nodes_to_remove=[]
-        nodes_to_add=[]
+        nodes_to_remove = []
+        nodes_to_add = []
 
         for node in nodes:
             # do gather on word directly
-            if node.op_type =='Add':
+            if node.op_type == 'Add':
                 output_name = node.output[0]
                 children = input_name_to_node[output_name]
                 sub_count = 0
                 reduceMean = 0
                 for child in children:
                     if child.op_type == 'Sub':
-                        sub_count = sub_count +1
+                        sub_count = sub_count + 1
                     if child.op_type == 'ReduceMean':
                         reduceMean = reduceMean + 1
                 if sub_count == 2 and reduceMean == 1: #find a normalize pattern
@@ -718,115 +763,25 @@ class BertOnnxModel(OnnxModel):
                     second_add_node = input_name_to_node[mul_node.output[0]][0]
                     nodes_to_remove.extend([pow_node, reduceMean_node, first_add_node, sqrt_node, div_node, mul_node, second_add_node])
                     if self.normalize_name == "LayerNormalization":
-                        normalize_node = onnx.helper.make_node(
-                            'LayerNormalization',
+                        normalize_node = onnx.helper.make_node('LayerNormalization',
                             inputs=[output_name, mul_node.input[0], second_add_node.input[1]],
-                            outputs=[second_add_node.output[0]]
-                            )
+                            outputs=[second_add_node.output[0]])
                         nodes_to_add.extend([normalize_node])
                     else:
                         assert(self.normalize_name == "SkipLayerNormalization")
                         sln_inputs = [i for i in node.input]
                         sln_inputs.extend([mul_node.input[0], second_add_node.input[1]])
-                        normalize_node = onnx.helper.make_node(
-                            'SkipLayerNormalization',
+                        normalize_node = onnx.helper.make_node('SkipLayerNormalization',
                             inputs=sln_inputs,
                             outputs=[second_add_node.output[0]],
-                            name="SkipLayerNorm_" + second_add_node.output[0]
-                        )
+                            name="SkipLayerNorm_" + second_add_node.output[0])
                         normalize_node.domain = "com.microsoft"
-                        #gamma_attribute = onnx.helper.make_attribute("gamma", self.get_initializer(mul_node.input[0]))
-                        #beta_attribute = onnx.helper.make_attribute("beta", self.get_initializer(second_add_node.input[1]))
-                        #normalize_node.attribute.extend([gamma_attribute, beta_attribute])
                         nodes_to_add.extend([normalize_node])
                         nodes_to_remove.append(node)
 
         for to_remove in nodes_to_remove:
             nodes.remove(to_remove)
         nodes.extend(nodes_to_add)
-
-#-----
-def input_index(node_output, child_node):
-    index = 0
-    for input in child_node.input:
-        if input == node_output:
-            return index
-        index += 1
-    return -1
-
-def add_or_replace_weight(weights_to_add, graph, weight_tensor):
-    # weight existed in graph
-    initializer = findTensor(weight_tensor.name, graph)
-    if initializer is not None:
-        print("replace weight in initializer", weight_tensor.name)
-        graph.initializer.remove(initializer)
-
-    # weight existed to be added
-    for weight in weights_to_add:
-        if weight.name == weight_tensor.name:
-            weights_to_add.remove(weight)
-            break
-
-    weights_to_add.append(weight_tensor)
-
-
-
-def replace_graph_input(graph_inputs, old_input_name, new_input):
-    inputs = []
-    for input in graph_inputs:
-        if input.name != old_input_name:
-            inputs.append(input)
-
-    # always add new input
-    inputs.append(new_input)
-    return inputs
-
-def replace_input(node, old_input, new_input):
-    assert(isinstance(new_input, str))
-    
-    for j in range(len(node.input)):
-        if node.input[j] == old_input:
-            node.input[j] = new_input
-
-def create_new_node_for_replace_input(node, old_input, new_inputs):
-    inputs = []
-    for input in node.input:
-        if input == old_input:
-            for i in new_inputs:
-                inputs.append(i)
-        else:
-            inputs.append(input)
-
-    #TODO: copy node name and attributes
-    new_node = onnx.helper.make_node(
-        node.op_type,
-        inputs=inputs,
-        outputs=node.output
-        )
-    new_node.name = node.name
-    new_node.attribute = node.attribute
-    return new_node
-
-def delete_and_skip_node(nodes, node, nodes_to_remove, nodes_to_add):
-    nodes_to_remove.append(node)
-
-    all_nodes = nodes_to_add + [n for n in nodes if n not in nodes_to_remove]
-
-    # for all children, change their input to parent of current node.
-    for node_output in node.output:
-        for n in all_nodes:
-            if node_output in n.input:
-                if len(node.input) == 1:
-                    replace_input(n, node_output, node.input[0])
-                else:
-                    new_node = create_new_node_for_replace_input(n, node_output, node.input)
-                    nodes_to_add.append(new_node)
-                    if n in nodes:
-                        nodes_to_remove.append(n)
-                    else:
-                        nodes_to_add.remove(n)
-
-
 
 def main():
     parser = argparse.ArgumentParser()
@@ -848,13 +803,16 @@ def main():
     parser.add_argument('--fuse_embed_layer', required=False, action='store_true')
     parser.set_defaults(fuse_embed_layer=False)
     parser.add_argument('--fuse_all', required=False, action='store_true')
-    parser.set_defaults(fuse_all=True)
+    parser.set_defaults(fuse_all=False)
     parser.add_argument('--input_int32', required=False, action='store_true')
     parser.set_defaults(input_int32=False)
     parser.add_argument('--output_float16', required=False, action='store_true')
     parser.set_defaults(output_float16=False)
     parser.add_argument('--dynamic_batch', required=False, action='store_true')
     parser.set_defaults(dynamic_batch=False)
+    parser.add_argument('--gelu_name', required=False, type=str, default='FastGelu', choices=['Gelu','FastGelu'])
+    parser.add_argument('--verbose', required=False, action='store_true')
+    parser.set_defaults(verbose=False)
 
     args = parser.parse_args()
 
@@ -868,20 +826,20 @@ def main():
     with open(args.input, "rb") as f:
         model.ParseFromString(f.read())
 
-    normalize_name =  'SkipLayerNormalization' if args.fuse_skipLayerNorm else 'LayerNormalization'
+    normalize_name = 'SkipLayerNormalization' if args.fuse_skipLayerNorm else 'LayerNormalization'
     
     bert_model = BertOnnxModel(model, normalize_name, args.num_heads, args.head_size, args.batch_size, args.sequence_length)
 
     bert_model.fuse_layerNorm()
 
     if args.fuse_gelu:
-        bert_model.fuse_gelu()
+        bert_model.fuse_gelu(args.gelu_name)
 
     if args.fuse_attention:
-        bert_model.fuse_attention()
+        bert_model.fuse_attention(args.verbose)
 
         if args.fuse_embed_layer:
-            bert_model.fuse_embed_layer()
+            bert_model.fuse_embed_layer(args.verbose)
 
             if args.input_int32:
                 bert_model.change_input_to_int32()
