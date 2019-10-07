@@ -2,13 +2,9 @@
 // Licensed under the MIT License.
 
 #include "gtest/gtest.h"
+#include "test/common/tensor_op_test_utils.h"
+#include "test/common/cuda_op_test_utils.h"
 #include "test/providers/provider_test_utils.h"
-#include "test/util/include/default_providers.h"
-
-#include <iterator>
-#include <vector>
-#include <string>
-#include <algorithm>
 
 namespace onnxruntime {
 namespace test {
@@ -22,28 +18,36 @@ static void RunAttentionTest(
     int batch_size,
     int sequence_length,
     int hidden_size,
-    int number_of_heads) {
-  OpTester test("Attention", 1, onnxruntime::kMSDomain);
-  test.AddAttribute<int64_t>("num_heads", static_cast<int64_t>(number_of_heads));
+    int number_of_heads,
+    bool use_float16 = false) {
+  int min_cuda_architecture = use_float16 ? 530 : 0;
+  if (HasCudaEnvironment(min_cuda_architecture)) {
+    OpTester tester("Attention", 1, onnxruntime::kMSDomain);
+    tester.AddAttribute<int64_t>("num_heads", static_cast<int64_t>(number_of_heads));
 
-  std::vector<int64_t> input_dims = {batch_size, sequence_length, hidden_size};
-  std::vector<int64_t> weights_dims = {hidden_size, 3 * hidden_size};
-  std::vector<int64_t> bias_dims = {3 * hidden_size};
-  std::vector<int64_t> mask_index_dims = {batch_size};
-  std::vector<int64_t> output_dims = input_dims;
+    std::vector<int64_t> input_dims = {batch_size, sequence_length, hidden_size};
+    std::vector<int64_t> weights_dims = {hidden_size, 3 * hidden_size};
+    std::vector<int64_t> bias_dims = {3 * hidden_size};
+    std::vector<int64_t> mask_index_dims = {batch_size};
+    std::vector<int64_t> output_dims = input_dims;
 
-  test.AddInput<float>("input", input_dims, input_data);
-  test.AddInput<float>("weight", weights_dims, weights_data);
-  test.AddInput<float>("bias", bias_dims, bias_data);
-  test.AddInput<int32_t>("mask_index", mask_index_dims, mask_index_data);
-  test.AddOutput<float>("output", output_dims, output_data);
+    if (use_float16) {
+      tester.AddInput<MLFloat16>("input", input_dims, ToFloat16(input_data));
+      tester.AddInput<MLFloat16>("weight", weights_dims, ToFloat16(weights_data));
+      tester.AddInput<MLFloat16>("bias", bias_dims, ToFloat16(bias_data));
+      tester.AddInput<int32_t>("mask_index", mask_index_dims, mask_index_data);
+      tester.AddOutput<MLFloat16>("output", output_dims, ToFloat16(output_data));
+    } else {
+      tester.AddInput<float>("input", input_dims, input_data);
+      tester.AddInput<float>("weight", weights_dims, weights_data);
+      tester.AddInput<float>("bias", bias_dims, bias_data);
+      tester.AddInput<int32_t>("mask_index", mask_index_dims, mask_index_data);
+      tester.AddOutput<float>("output", output_dims, output_data);
+    }
 
-  // Run test on CUDA provider since Attention only have CUDA kernel.
-  std::vector<std::unique_ptr<IExecutionProvider>> execution_providers;
-  execution_providers.push_back(DefaultCudaExecutionProvider());
-  if (execution_providers[0].get() != nullptr)
-  {
-    test.Run(OpTester::ExpectResult::kExpectSuccess, "", {}, nullptr, &execution_providers);
+    std::vector<std::unique_ptr<IExecutionProvider>> execution_providers;
+    execution_providers.push_back(DefaultCudaExecutionProvider());
+    tester.Run(OpTester::ExpectResult::kExpectSuccess, "", {}, nullptr, &execution_providers);
   }
 }
 
@@ -74,6 +78,35 @@ TEST(AttentionTest, AttentionBatch1) {
 
   RunAttentionTest(input_data, weight_data, bias_data, mask_index_data, output_data,
                    batch_size, sequence_length, hidden_size, number_of_heads);
+}
+
+TEST(AttentionTest, AttentionBatch1_Float16) {
+  int batch_size = 1;
+  int sequence_length = 2;
+  int hidden_size = 4;
+  int number_of_heads = 2;
+
+  std::vector<float> input_data = {
+      0.8f, -0.5f, 0.0f, 1.f,
+      0.5f, 0.2f, 0.3f, -0.6f};
+
+  std::vector<float> weight_data = {
+      0.1f, -0.2f, 0.3f, 1.0f, 1.1f, 0.3f, 0.5f, 0.2f, 0.3f, -0.6f, 1.5f, 2.0f,
+      0.5f, 0.1f, 0.4f, 1.6f, 1.0f, 2.0f, 0.4f, 0.8f, 0.9f, 0.1f, -1.3f, 0.7f,
+      0.3f, 0.2f, 4.0f, 2.2f, 1.6f, 1.1f, 0.7f, 0.2f, 0.4f, 1.0f, 1.2f, 0.5f,
+      0.2f, 0.1f, 0.4f, 1.6f, 2.4f, 3.3f, 2.1f, 4.2f, 8.4f, 0.0f, 2.1f, 3.2f};
+
+  std::vector<float> bias_data = {
+      -0.5f, 0.6f, 1.2f, 2.1f, 0.5f, 0.7f, 0.2f, 1.2f, 0.5f, 0.4f, 0.3f, 1.2f};
+
+  std::vector<int32_t> mask_index_data = {2L};
+
+  std::vector<float> output_data = {
+      3.154296875, 0.1082763671875, 4.25, 5.6484375,
+      3.970703125, 0.072998046875, 4.25, 5.6484375};
+
+  RunAttentionTest(input_data, weight_data, bias_data, mask_index_data, output_data,
+                   batch_size, sequence_length, hidden_size, number_of_heads, true);
 }
 
 TEST(AttentionTest, AttentionBatch2) {
