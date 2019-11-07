@@ -12,8 +12,8 @@ ONNX_CPU_OPERATOR_KERNEL(
     Shrink,
     9,
     KernelDefBuilder()
-    .MayInplace(0, 0)
-    .TypeConstraint("T", DataTypeImpl::AllNumericTensorTypes()),
+        .MayInplace(0, 0)
+        .TypeConstraint("T", DataTypeImpl::AllNumericTensorTypes()),
     Shrink);
 
 namespace shrink_internal {
@@ -37,45 +37,53 @@ Status ShrinkImpl(const Tensor* input, Tensor* output, float bias, float lambd) 
   return Status::OK();
 }
 
-template <>
-Status ShrinkImpl<MLFloat16>(const Tensor* input, Tensor* output, float bias, float lambd) {
-  const auto& span = gsl::make_span(input->Data<MLFloat16>(), input->Shape().Size());
-  auto* output_data = output->template MutableData<MLFloat16>();
-  std::transform(span.cbegin(), span.cend(), output_data, [bias, lambd](const MLFloat16& val) {
-    float fl = math::halfToFloat(val.val);
-    return MLFloat16(math::floatToHalf(ShrinkCore<float>(fl, bias, lambd)));
-  });
-  return Status::OK();
-}
+//template <>
+//Status ShrinkImpl<MLFloat16>(const Tensor* input, Tensor* output, float bias, float lambd) {
+//  const auto& span = gsl::make_span(input->Data<MLFloat16>(), input->Shape().Size());
+//  auto* output_data = output->template MutableData<MLFloat16>();
+//  std::transform(span.cbegin(), span.cend(), output_data, [bias, lambd](const MLFloat16& val) {
+//    float fl = math::halfToFloat(val.val);
+//    return MLFloat16(math::floatToHalf(ShrinkCore<float>(fl, bias, lambd)));
+//  });
+//  return Status::OK();
+//}
+//
+//template <>
+//Status ShrinkImpl<BFloat16>(const Tensor* input, Tensor* output, float bias, float lambd) {
+//  const auto& span = gsl::make_span(input->Data<BFloat16>(), input->Shape().Size());
+//  auto* output_data = output->template MutableData<BFloat16>();
+//  std::transform(span.cbegin(), span.cend(), output_data, [bias, lambd](const BFloat16& val) {
+//    float fl = val.ToFloat();
+//    return BFloat16(ShrinkCore<float>(fl, bias, lambd));
+//  });
+//  return Status::OK();
+//}
 
-template <>
-Status ShrinkImpl<BFloat16>(const Tensor* input, Tensor* output, float bias, float lambd) {
-  const auto& span = gsl::make_span(input->Data<BFloat16>(), input->Shape().Size());
-  auto* output_data = output->template MutableData<BFloat16>();
-  std::transform(span.cbegin(), span.cend(), output_data, [bias, lambd](const BFloat16& val) {
-    float fl = val.ToFloat();
-    return BFloat16(ShrinkCore<float>(fl, bias, lambd));
-  });
-  return Status::OK();
-}
-
-template <>
-Status ShrinkImpl<bool>(const Tensor* /*input*/, Tensor* /*output*/, float /*bias*/, float /*lambd*/) {
-  return ORT_MAKE_STATUS(
-      ONNXRUNTIME, INVALID_ARGUMENT,
-      "Input types for the Shrink operator are constrained "
-      "to all numeric types only. Got bool type here.");
-}
-
-template <>
-Status ShrinkImpl<std::string>(const Tensor* /*input*/, Tensor* /*output*/, float /*bias*/, float /*lambd*/) {
-  return ORT_MAKE_STATUS(
-      ONNXRUNTIME, INVALID_ARGUMENT,
-      "Input types for the Shrink operator are constrained "
-      "to all numeric types only. Got std::string type here.");
-}
+//template <>
+//Status ShrinkImpl<bool>(const Tensor* /*input*/, Tensor* /*output*/, float /*bias*/, float /*lambd*/) {
+//  return ORT_MAKE_STATUS(
+//      ONNXRUNTIME, INVALID_ARGUMENT,
+//      "Input types for the Shrink operator are constrained "
+//      "to all numeric types only. Got bool type here.");
+//}
+//
+//template <>
+//Status ShrinkImpl<std::string>(const Tensor* /*input*/, Tensor* /*output*/, float /*bias*/, float /*lambd*/) {
+//  return ORT_MAKE_STATUS(
+//      ONNXRUNTIME, INVALID_ARGUMENT,
+//      "Input types for the Shrink operator are constrained "
+//      "to all numeric types only. Got std::string type here.");
+//}
 
 }  // namespace shrink_internal
+
+#define DispatchOnTensorTypeWithReturnMini(tensor_type, retval, function, ...) \
+  if (tensor_type == DataTypeImpl::GetType<float>())                           \
+    retval = function<float>(__VA_ARGS__);                                     \
+  else if (tensor_type == DataTypeImpl::GetType<int64_t>())                    \
+    retval = function<int64_t>(__VA_ARGS__);                                   \
+  else                                                                         \
+    ORT_ENFORCE(false, "Unknown tensor type of ", tensor_type)
 
 Status Shrink::Compute(OpKernelContext* p_op_kernel_context) const {
   using namespace shrink_internal;
@@ -84,7 +92,7 @@ Status Shrink::Compute(OpKernelContext* p_op_kernel_context) const {
   auto* output = p_op_kernel_context->Output(0, input->Shape());
   const auto& dtype = input->DataType();
   Status status;
-  DispatchOnTensorTypeWithReturn(dtype, status, ShrinkImpl, input, output, bias_, lambd_);
+  DispatchOnTensorTypeWithReturnMini(dtype, status, ShrinkImpl, input, output, bias_, lambd_);
   return status;
 }
 }  // namespace onnxruntime
