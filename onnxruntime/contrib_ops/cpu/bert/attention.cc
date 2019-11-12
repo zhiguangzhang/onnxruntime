@@ -219,12 +219,12 @@ Status Attention<T>::Compute(OpKernelContext* context) const {
 
     if (false && tp != nullptr) {
       tp->ParallelFor(loop_len, [num_heads = num_heads_,
-                                                               bias_data = bias->template Data<T>(),
-                                                               sequence_length,
-                                                               batch_size,
-                                                               head_size,
-                                                               hidden_size,
-                                                               QKV](int32_t i) {
+                                 bias_data = bias->template Data<T>(),
+                                 sequence_length,
+                                 batch_size,
+                                 head_size,
+                                 hidden_size,
+                                 QKV](int32_t i) {
         int seq_index = i % sequence_length;
         int rest = i / sequence_length;
         int head_index = rest % num_heads;
@@ -373,7 +373,7 @@ Status Attention<T>::Compute(OpKernelContext* context) const {
     float alpha = 1.0f / sqrt(static_cast<float>(head_size));
 
     if (tp != nullptr) {
-      tp->ParallelFor(batch_size * num_heads_, [this, sequence_length, head_size, alpha, Q, K, scratch_data, tp](int32_t i) {
+      tp->ParallelFor(batch_size * num_heads_, [this, sequence_length, head_size, alpha, Q, K, scratch_data](int32_t i) {
         math::Gemm<T>(
             CblasNoTrans,
             CblasTrans,
@@ -385,7 +385,7 @@ Status Attention<T>::Compute(OpKernelContext* context) const {
             K + sequence_length * head_size * i,
             1.0,
             reinterpret_cast<T*>(scratch_data) + sequence_length * sequence_length * i,
-            tp);
+            reinterpret_cast<concurrency::ThreadPool*>(nullptr));
       });
     } else {
       int offset_Q = 0;
@@ -406,7 +406,7 @@ Status Attention<T>::Compute(OpKernelContext* context) const {
               K + offset_Q,
               1.0,
               reinterpret_cast<T*>(scratch_data) + offset_scratch,
-              tp);
+              reinterpret_cast<concurrency::ThreadPool*>(nullptr));
           offset_Q += offset_Q_increment;
           offset_scratch += offset_scratch_increment;
         }
@@ -430,18 +430,22 @@ Status Attention<T>::Compute(OpKernelContext* context) const {
     int N = batch_size * num_heads_ * sequence_length;
     int D = sequence_length;
 
-    Eigen::TensorMap<Eigen::Tensor<const T, 2, Eigen::RowMajor, Eigen::DenseIndex>, Eigen::Aligned> X_tensor(
-        reinterpret_cast<T*>(scratch_data), N, D);
-    Eigen::TensorMap<Eigen::Tensor<T, 2, Eigen::RowMajor, Eigen::DenseIndex>, Eigen::Aligned> Y_tensor(
-        reinterpret_cast<T*>(p_data), N, D);
-#ifndef USE_OPENMP
-    if (tp == nullptr)
-#endif
-      ComputeSoftMax(Eigen::DefaultDevice(), X_tensor, Y_tensor, false);
-#ifndef USE_OPENMP
-    else
-      ComputeSoftMax(Eigen::ThreadPoolDevice(&tp->GetHandler(), tp->NumThreads()), X_tensor, Y_tensor, false);
-#endif
+//     Eigen::TensorMap<Eigen::Tensor<const T, 2, Eigen::RowMajor, Eigen::DenseIndex>, Eigen::Aligned> X_tensor(
+//         reinterpret_cast<T*>(scratch_data), N, D);
+//     Eigen::TensorMap<Eigen::Tensor<T, 2, Eigen::RowMajor, Eigen::DenseIndex>, Eigen::Aligned> Y_tensor(
+//         reinterpret_cast<T*>(p_data), N, D);
+// #ifndef USE_OPENMP
+//     if (tp == nullptr)
+// #endif
+//       ComputeSoftMax(Eigen::DefaultDevice(), X_tensor, Y_tensor, false);
+// #ifndef USE_OPENMP
+//     else
+//       ComputeSoftMax(Eigen::ThreadPoolDevice(&tp->GetHandler(), tp->NumThreads()), X_tensor, Y_tensor, false);
+// #endif
+
+    // TODO: support other type (half/double)
+    // ORT_ENFORCE(element_size == 4);
+    // vsExp(N * D, m_QKOutputs, reinterpret_cast<T*>(p_data));
   }
 
   if (is_profiler_enabled) {
@@ -466,7 +470,7 @@ Status Attention<T>::Compute(OpKernelContext* context) const {
             reinterpret_cast<T*>(p_data) + sequence_length * sequence_length * i,
             V + sequence_length * head_size * i,
             reinterpret_cast<T*>(out_tmp_data) + sequence_length * head_size * i,
-            tp);
+            reinterpret_cast<concurrency::ThreadPool*>(nullptr));
       });
     } else {
       int offset_p = 0;
@@ -483,7 +487,7 @@ Status Attention<T>::Compute(OpKernelContext* context) const {
               reinterpret_cast<T*>(p_data) + offset_p,
               V + offset_V,
               reinterpret_cast<T*>(out_tmp_data) + offset_V,
-              tp);
+              reinterpret_cast<concurrency::ThreadPool*>(nullptr));
           offset_p += offset_p_increment;
           offset_V += offset_V_increment;
         }
