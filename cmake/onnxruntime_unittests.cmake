@@ -526,6 +526,8 @@ set(onnx_test_runner_common_srcs
   ${onnx_test_runner_src_dir}/sync_api.cc
   ${onnx_test_runner_src_dir}/callback.h
   ${onnx_test_runner_src_dir}/callback.cc
+  ${onnx_test_runner_src_dir}/pb_helper.h
+  ${onnx_test_runner_src_dir}/pb_helper.cc
   ${onnx_test_runner_src_dir}/mem_buffer.h
   ${onnx_test_runner_src_dir}/tensorprotoutils.h
   ${onnx_test_runner_src_dir}/tensorprotoutils.cc)
@@ -553,9 +555,7 @@ set(onnx_test_libs
   onnxruntime_test_utils
   ${ONNXRUNTIME_TEST_LIBS}
   onnx_test_data_proto
-  re2)
-
-list(APPEND onnx_test_libs ${onnxruntime_EXTERNAL_LIBRARIES} libprotobuf) # test code uses delimited parsing and hence needs to link with the full protobuf
+  re2 ${onnxruntime_EXTERNAL_LIBRARIES})
 
 if (onnxruntime_ENABLE_LANGUAGE_INTEROP_OPS)
   list(APPEND onnx_test_libs onnxruntime_language_interop onnxruntime_pyop)
@@ -629,7 +629,7 @@ endif()
 
 if (onnxruntime_BUILD_SHARED_LIB)
   set(onnxruntime_perf_test_libs onnxruntime_test_utils onnx_test_runner_common onnxruntime_common re2
-          onnx_test_data_proto onnx_proto libprotobuf ${GETOPT_LIB_WIDE} onnxruntime ${onnxruntime_EXTERNAL_LIBRARIES}
+          onnx_test_data_proto onnx_proto protobuf::libprotobuf ${GETOPT_LIB_WIDE} onnxruntime ${onnxruntime_EXTERNAL_LIBRARIES}
           ${SYS_PATH_LIB} ${CMAKE_DL_LIBS})
   if(onnxruntime_USE_NSYNC)
     list(APPEND onnxruntime_perf_test_libs nsync_cpp)
