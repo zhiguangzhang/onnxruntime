@@ -1,5 +1,12 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
+
+//Ignore a wired warning in gcc 7.4.0. The latest gcc doesn't generate this warning
+#ifdef __GNUC__
+#ifdef HAS_MAYBE_UNINITIALIZED
+#pragma GCC diagnostic ignored "-Wmaybe-uninitialized"
+#endif
+#endif
 #include "core/providers/cpu/math/softmax.h"
 
 #include "core/framework/op_kernel.h"
