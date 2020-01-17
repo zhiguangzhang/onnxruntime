@@ -25,7 +25,10 @@ function(AddTest)
   endif(_UT_DEPENDS)
 
   add_executable(${_UT_TARGET} ${_UT_SOURCES})
-
+  if (MSVC AND NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
+    #TODO: fix the warnings, they are dangerous
+    target_compile_options(${_UT_TARGET} PRIVATE "/wd4244")
+  endif()
   source_group(TREE ${TEST_SRC_DIR} FILES ${_UT_SOURCES})
   set_target_properties(${_UT_TARGET} PROPERTIES FOLDER "ONNXRuntimeTest")
 
@@ -537,6 +540,10 @@ if(WIN32)
 endif()
 
 add_library(onnx_test_runner_common ${onnx_test_runner_common_srcs})
+if (MSVC AND NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
+    #TODO: fix the warnings, they are dangerous
+    target_compile_options(onnx_test_runner_common PRIVATE "/wd4244")
+endif()
 onnxruntime_add_include_to_target(onnx_test_runner_common onnxruntime_common onnxruntime_framework onnxruntime_test_utils onnx onnx_proto)
 add_dependencies(onnx_test_runner_common onnx_test_data_proto ${onnxruntime_EXTERNAL_DEPENDENCIES})
 target_include_directories(onnx_test_runner_common PRIVATE ${eigen_INCLUDE_DIRS} ${CMAKE_CURRENT_BINARY_DIR} ${CMAKE_CURRENT_BINARY_DIR}/onnx ${ONNXRUNTIME_ROOT} ${REPO_ROOT}/cmake/external/re2)

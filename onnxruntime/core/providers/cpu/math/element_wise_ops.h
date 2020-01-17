@@ -365,7 +365,7 @@ struct BroadcastIterator {
   }
 
   void StartBroadcasting() {
-    deltas_.push_back(-count_);
+    deltas_.push_back(0 - count_);
     counts_.push_back(1);
   }
 

@@ -2,7 +2,16 @@
 // Licensed under the MIT License.
 
 #include "core/providers/cpu/math/element_wise_ops.h"
+
+#if defined(_MSC_VER)
+#pragma warning(push)
+#pragma warning(disable : 4127)
+#endif
 #include <unsupported/Eigen/SpecialFunctions>
+#if defined(_MSC_VER)
+#pragma warning(pop)
+#endif
+
 #include "core/util/math.h"
 #include "core/mlas/inc/mlas.h"
 
