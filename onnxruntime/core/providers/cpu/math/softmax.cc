@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
+#include "onnxruntime_config.h"
 //Ignore a wired warning in gcc 7.4.0. The latest gcc doesn't generate this warning
 #ifdef __GNUC__
 #ifdef HAS_MAYBE_UNINITIALIZED
