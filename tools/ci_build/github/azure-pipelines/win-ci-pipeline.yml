@@ -126,5 +126,9 @@ jobs:
     displayName: 'Component Detection'
     condition: succeeded()
 
+  - task: SDLNativeRules@2
+    inputs:
+      userProvideBuildInfo: 'auto'
+      
   - template: templates/clean-agent-build-directory-step.yml
    
