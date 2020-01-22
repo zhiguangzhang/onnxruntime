@@ -72,6 +72,8 @@ struct OperatorRegistrationInformation
 
 };
 
+// #dml-new-operator-location
+
 DML_OP_EXTERN_CREATION_FUNCTION(Copy);
 DML_OP_EXTERN_CREATION_FUNCTION(FC);
 DML_OP_EXTERN_CREATION_FUNCTION(Conv);
@@ -200,6 +202,7 @@ DML_OP_EXTERN_CREATION_FUNCTION(MaxUnpool);
 DML_OP_EXTERN_CREATION_FUNCTION(Scatter);
 DML_OP_EXTERN_CREATION_FUNCTION(Resize);
 DML_OP_EXTERN_CREATION_FUNCTION(ConstantOfShape);
+DML_OP_EXTERN_CREATION_FUNCTION(BitShift);
 
 const static char* const typeNameListDefault[1] = {"T"};
 const static char* const typeNameListTopK[2] = { "T", "I" };
@@ -214,6 +217,7 @@ const static char* const typeNameListOneHot[3] = { "T1", "T2", "T3" };
 const static char* const typeNameListEyeLike[1] = { "T2" };
 const static SupportedTensorDataTypes supportedTypeListAll[1] = {SupportedTensorDataTypes::All};
 const static SupportedTensorDataTypes supportedTypeListFloat16to32[1] = {SupportedTensorDataTypes::Float16to32};
+const static SupportedTensorDataTypes supportedTypeListInt8to32[1] = { SupportedTensorDataTypes::Int8to32 };
 const static SupportedTensorDataTypes supportedTypeListInt32to64AndFloat16to32[1] = {SupportedTensorDataTypes::Int32to64|SupportedTensorDataTypes::Float16to32};
 const static SupportedTensorDataTypes supportedTypeListNumericDefault[1] = { SupportedTensorDataTypes::NumericDefault };
 const static SupportedTensorDataTypes supportedTypeListAllScalars[1] = { SupportedTensorDataTypes::AllScalars };
@@ -359,6 +363,7 @@ const static OperatorRegistrationInformation operatorRegistrationInformationTabl
     {REG_INFO(      7,  And,                                typeNameListDefault,            supportedTypeListBool,              DmGraphSupport::Supported)},
     {REG_INFO(      7,  Or,                                 typeNameListDefault,            supportedTypeListBool,              DmGraphSupport::Supported)},
     {REG_INFO(      7,  Xor,                                typeNameListDefault,            supportedTypeListBool,              DmGraphSupport::Supported)},
+    {REG_INFO(     11,  BitShift,                           typeNameListDefault,            supportedTypeListInt8to32,          DmGraphSupport::Supported)},
 
     // Imaging Operators                                
     {REG_INFO(      7,  Crop,                               typeNameListDefault,            supportedTypeListFloat16to32,       DmGraphSupport::Supported)},

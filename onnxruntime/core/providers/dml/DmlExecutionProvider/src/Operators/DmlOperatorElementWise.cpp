@@ -415,6 +415,32 @@ public:
 };
 
 template <typename TOperatorDesc>
+class DmlOperatorElementwiseBitShift : public DmlOperator
+{
+public:
+    DmlOperatorElementwiseBitShift(const MLOperatorKernelCreationContext& kernelInfo) : DmlOperator(kernelInfo)
+    {
+        ML_CHECK_VALID_ARGUMENT(kernelInfo.GetInputCount() == 2);
+        ML_CHECK_VALID_ARGUMENT(kernelInfo.GetOutputCount() == 1);
+
+        ML_CHECK_VALID_ARGUMENT(kernelInfo.GetAttribute(AttrName::Direction) == "LEFT");
+
+        Initialize(kernelInfo, std::nullopt, std::nullopt, kernelInfo.GetTensorShapeDescription().GetOutputTensorShape(0));
+
+        std::vector<DML_TENSOR_DESC> inputDescs = GetDmlInputDescs();
+        std::vector<DML_TENSOR_DESC> outputDescs = GetDmlOutputDescs();
+
+        DML_OPERATOR_TYPE operatorType = ApiTraits::OperatorDescTraits<DML_ELEMENT_WISE_BIT_SHIFT_LEFT_OPERATOR_DESC>::Type;
+        DML_ELEMENT_WISE_BIT_SHIFT_LEFT_OPERATOR_DESC opDesc = {};
+        opDesc.ATensor = &inputDescs[0];
+        opDesc.BTensor = &inputDescs[1];
+        opDesc.OutputTensor = &outputDescs[0];
+
+        SetDmlOperatorDesc({ operatorType, &opDesc }, kernelInfo);
+    }
+};
+
+template <typename TOperatorDesc>
 class DmlOperatorElementwiseQLinear : public DmlOperator
 {
 public:
@@ -534,6 +560,7 @@ DML_OP_DEFINE_CREATION_FUNCTION(Add,              DmlOperatorElementwiseBinary<D
 DML_OP_DEFINE_CREATION_FUNCTION(Sub,              DmlOperatorElementwiseBinary<DML_ELEMENT_WISE_SUBTRACT_OPERATOR_DESC>);
 DML_OP_DEFINE_CREATION_FUNCTION(Mul,              DmlOperatorElementwiseBinary<DML_ELEMENT_WISE_MULTIPLY_OPERATOR_DESC>);
 DML_OP_DEFINE_CREATION_FUNCTION(Div,              DmlOperatorElementwiseBinary<DML_ELEMENT_WISE_DIVIDE_OPERATOR_DESC>);
+DML_OP_DEFINE_CREATION_FUNCTION(BitShift,         DmlOperatorElementwiseBitShift<DML_ELEMENT_WISE_BIT_SHIFT_LEFT_OPERATOR_DESC>);
 
 // Binary operators that support >2 inputs:
 DML_OP_DEFINE_CREATION_FUNCTION(Sum,              DmlOperatorElementwiseBinaryLoop<DML_ELEMENT_WISE_ADD_OPERATOR_DESC>);

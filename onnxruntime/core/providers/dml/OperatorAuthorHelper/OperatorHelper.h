@@ -1096,6 +1096,8 @@ protected:
     std::vector<uint32_t> m_outputDimensions;
 };
 
+// #dml-new-operator-location
+
 using ShapeInferenceHelper_Conv = ConvHelper;
 using ShapeInferenceHelper_ConvTranspose = ConvTransposeHelper;
 using ShapeInferenceHelper_AveragePool = PoolingHelper;
@@ -1178,6 +1180,7 @@ using ShapeInferenceHelper_Asinh = GetBroadcastedOutputShapeHelper;
 using ShapeInferenceHelper_Acosh = GetBroadcastedOutputShapeHelper;
 using ShapeInferenceHelper_Atanh = GetBroadcastedOutputShapeHelper;
 using ShapeInferenceHelper_Where = GetBroadcastedOutputShapeHelper;
+using ShapeInferenceHelper_BitShift = GetOutputShapeAsInputShapeHelper;
 
 using ShapeInferenceHelper_ReduceSum = ReduceHelper;
 using ShapeInferenceHelper_ReduceMean = ReduceHelper;

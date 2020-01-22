@@ -1,5 +1,8 @@
 ﻿// Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
+// #dml-new-operator-location
+
+#pragma once
 
 #pragma once
 
@@ -25,7 +28,7 @@ struct EnumTraits<DML_TENSOR_TYPE>
 template <>
 struct EnumTraits<DML_OPERATOR_TYPE>
 {
-    static constexpr auto ValueCount = 97;
+    static constexpr auto ValueCount = 98;
     static constexpr size_t ActivationFunctionCount = 19;
 };
 
@@ -611,6 +614,12 @@ struct OperatorDescTraits<DML_RESAMPLE_OPERATOR_DESC>
 };
 
 template <>
+struct OperatorDescTraits<DML_ELEMENT_WISE_BIT_SHIFT_LEFT_OPERATOR_DESC>
+{
+    static constexpr DML_OPERATOR_TYPE Type = DML_OPERATOR_ELEMENT_WISE_BIT_SHIFT_LEFT;
+};
+
+template <>
 struct OperatorDescTraits<DML_ACTIVATION_ELU_OPERATOR_DESC>
 {
     static constexpr DML_OPERATOR_TYPE Type = DML_OPERATOR_ACTIVATION_ELU;
@@ -1193,6 +1202,12 @@ struct OperatorTypeTraits<(DML_OPERATOR_TYPE)DML_OPERATOR_RESAMPLE>
 };
 
 template <>
+struct OperatorTypeTraits<(DML_OPERATOR_TYPE)DML_OPERATOR_ELEMENT_WISE_BIT_SHIFT_LEFT>
+{
+    using DescType = DML_ELEMENT_WISE_BIT_SHIFT_LEFT_OPERATOR_DESC;
+};
+
+template <>
 struct OperatorTypeTraits<(DML_OPERATOR_TYPE)DML_OPERATOR_ACTIVATION_ELU>
 {
     using DescType = DML_ACTIVATION_ELU_OPERATOR_DESC;
@@ -1474,6 +1489,8 @@ auto OperatorTypeVisitor(DML_OPERATOR_TYPE type, Visitor&& visitor, Ts&&... args
         return std::invoke(std::forward<Visitor>(visitor), DML_ONE_HOT_OPERATOR_DESC{}, std::forward<Ts>(args)...);
     case DML_OPERATOR_RESAMPLE:
         return std::invoke(std::forward<Visitor>(visitor), DML_RESAMPLE_OPERATOR_DESC{}, std::forward<Ts>(args)...);
+    case DML_OPERATOR_ELEMENT_WISE_BIT_SHIFT_LEFT:
+        return std::invoke(std::forward<Visitor>(visitor), DML_ELEMENT_WISE_BIT_SHIFT_LEFT_OPERATOR_DESC{}, std::forward<Ts>(args)...);
     case DML_OPERATOR_ACTIVATION_ELU:
         return std::invoke(std::forward<Visitor>(visitor), DML_ACTIVATION_ELU_OPERATOR_DESC{}, std::forward<Ts>(args)...);
     case DML_OPERATOR_ACTIVATION_HARDMAX:
@@ -1601,6 +1618,7 @@ inline gsl::czstring ToString(DML_OPERATOR_TYPE value)
     case DML_OPERATOR_SCATTER: return "DML_OPERATOR_SCATTER";
     case DML_OPERATOR_ONE_HOT: return "DML_OPERATOR_ONE_HOT";
     case DML_OPERATOR_RESAMPLE: return "DML_OPERATOR_RESAMPLE";
+    case DML_OPERATOR_ELEMENT_WISE_BIT_SHIFT_LEFT: return "DML_OPERATOR_ELEMENT_WISE_BIT_SHIFT_LEFT";
     default:
         assert(false);
         return "<unknown>";

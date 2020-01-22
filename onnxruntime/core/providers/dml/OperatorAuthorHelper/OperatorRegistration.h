@@ -3,6 +3,8 @@
 
 #pragma once
 
+// #dml-new-operator-location
+
 namespace OperatorHelper
 {
     // The since version of each operator in version 7 of the ONNX domain
@@ -179,6 +181,11 @@ namespace OperatorHelper
         static const int sc_sinceVer_ThresholdedRelu = 10;
         static const int sc_sinceVer_Upsample = 10;
     } // namespace OnnxOperatorSet10
+
+    namespace OnnxOperatorSet11
+    {
+        static const int sc_sinceVer_BitShift = 11;
+    } // namespace OnnxOperatorSet11
 
     namespace MsftOperatorSet1
     {
