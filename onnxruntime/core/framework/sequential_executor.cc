@@ -15,6 +15,8 @@
 #include "core/framework/op_kernel_context_internal.h"
 #include "core/framework/utils.h"
 
+#include "core/framework/bfc_arena.h"
+
 // Define this symbol to create Concurrency Visualizer markers.
 // See https://docs.microsoft.com/en-us/visualstudio/profiling/concurrency-visualizer-sdk
 // You will need to install Concurrency Visualizer and add the SDK to the project that compiles this file
@@ -229,7 +231,7 @@ Status SequentialExecutor::Execute(const SessionState& session_state, const std:
     elapsed.QuadPart /= perf_freq.QuadPart;
     // Log an event
     TraceLoggingWrite(telemetry_provider_handle,  // handle to my provider
-                      "OpEnd",       // Event Name that should uniquely identify your event.
+                      "OpEnd",                    // Event Name that should uniquely identify your event.
                       TraceLoggingValue(p_op_kernel->KernelDef().OpName().c_str(), "op_name"),
                       TraceLoggingValue(elapsed.QuadPart, "time"));
 #endif
@@ -275,6 +277,18 @@ Status SequentialExecutor::Execute(const SessionState& session_state, const std:
 
   if (is_profiler_enabled) {
     session_state.Profiler().EndTimeAndRecordEvent(profiling::SESSION_EVENT, "SequentialExecutor::Execute", tp);
+  }
+
+  std::cout << "Stats prior to free of ExecutionFrame\n";
+
+  for (auto& xp : session_state.GetExecutionProviders()) {
+    auto alloc = xp->GetAllocator(0, OrtMemTypeDefault);
+    BFCArena* arena = dynamic_cast<BFCArena*>(alloc.get());
+    if (arena) {
+      // TODO: GetStats should be const...
+      AllocatorStats tmp;
+      arena->GetStats(&tmp);
+    }
   }
 
   return Status::OK();

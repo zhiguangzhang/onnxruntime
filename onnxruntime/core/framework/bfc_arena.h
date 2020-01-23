@@ -86,7 +86,9 @@ class BFCArena : public IArenaAllocator {
   size_t AllocatedSize(const void* ptr);
 
  private:
-  void* AllocateRawInternal(size_t num_bytes, bool dump_log_on_failure);
+  BFCArena(IDeviceAllocator& resource_allocator, size_t total_memory);
+
+  void* AllocateRawInternal(size_t num_bytes, bool dump_log_on_failure, bool is_reserve = false);
   void DeallocateRawInternal(void* ptr);
 
   // A ChunkHandle is an index into the chunks_ vector in BFCAllocator
@@ -315,11 +317,11 @@ class BFCArena : public IArenaAllocator {
   // Try to add a new memory region that can satisfy an allocation of
   // 'rounded_bytes' bytes.  Returns true on success and false on
   // failure.
-  bool Extend(size_t rounded_bytes);
+  bool Extend(size_t rounded_bytes, bool is_reserve = false);
 
   // Returns a pointer to an underlying allocated chunk of size
   // 'rounded_bytes'.
-  void* FindChunkPtr(BinNum bin_num, size_t rounded_bytes, size_t num_bytes);
+  void* FindChunkPtr(BinNum bin_num, size_t rounded_bytes, size_t num_bytes, bool is_reserve);
 
   // Splits the chunk specified by 'h' into two chunks, one at least
   // of size 'num_bytes'.
@@ -422,7 +424,8 @@ class BFCArena : public IArenaAllocator {
   // The size of the current region allocation.
   size_t curr_region_allocation_bytes_;
 
-  std::unique_ptr<IDeviceAllocator> device_allocator_;
+  std::unique_ptr<IDeviceAllocator> owned_device_allocator_;
+  IDeviceAllocator* device_allocator_;
 
   mutable OrtMutex lock_;
 
@@ -440,6 +443,9 @@ class BFCArena : public IArenaAllocator {
   OrtMemoryInfo info_;
 
   std::unordered_map<void*, size_t> reserved_chunks_;
+  // std::list<std::pair<void*, size_t>> free_reserved_chunks_;
+
+  std::unique_ptr<BFCArena> reserved_arena_;
 
   ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(BFCArena);
 };
