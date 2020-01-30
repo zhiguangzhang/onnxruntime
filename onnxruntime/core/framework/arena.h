@@ -108,15 +108,5 @@ struct AllocatorStats {
        << "MaxAllocSize:   " << this->max_alloc_size << "\n";
     return ss.str();
   }
-
-  std::string DebugString(const AllocatorStats& subarena) const {
-    std::ostringstream ss;
-    ss << "InUse:          " << bytes_in_use + subarena.bytes_in_use << "\n"
-       << "TotalAllocated: " << total_allocated_bytes + subarena.total_allocated_bytes << "\n"
-       << "MaxInUse:       " << max_bytes_in_use + subarena.max_bytes_in_use << "\n"
-       << "NumAllocs:      " << num_allocs + subarena.num_allocs << "\n"
-       << "MaxAllocSize:   " << std::max(max_alloc_size, subarena.max_alloc_size) << "\n";
-    return ss.str();
-  }
 };
 }  // namespace onnxruntime

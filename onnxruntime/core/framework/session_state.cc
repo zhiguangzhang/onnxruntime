@@ -10,8 +10,6 @@
 #include "core/framework/op_kernel.h"
 #include "core/framework/utils.h"
 
-#include "core/framework/bfc_arena.h"
-
 using namespace ::onnxruntime::common;
 
 namespace onnxruntime {
@@ -148,7 +146,7 @@ const logging::Logger& SessionState::Logger() const {
 
 void SessionState::SetProfiler(profiling::Profiler& profiler) { profiler_ = &profiler; }
 
-onnxruntime::profiling::Profiler& SessionState::Profiler() const { return *profiler_; }
+::onnxruntime::profiling::Profiler& SessionState::Profiler() const { return *profiler_; }
 
 static int64_t CalculateMemoryPatternsKey(const std::vector<std::reference_wrapper<const TensorShape>>& shapes) {
   int64_t key = 0;
@@ -177,20 +175,6 @@ Status SessionState::UpdateMemoryPatternGroupCache(
   std::lock_guard<OrtMutex> lock(mem_patterns_lock_);
   auto it = mem_patterns_.find(key);
   if (it == mem_patterns_.end()) {
-    // reserve a block for each one
-    for (size_t i = 0, end = mem_patterns->locations.size(); i < end; i++) {
-      AllocatorPtr alloc = utils::GetAllocator(*this, mem_patterns->locations[i]);
-      BFCArena* arena = dynamic_cast<BFCArena*>(alloc.get());
-      if (arena) {
-        size_t peak_size = mem_patterns->patterns[i].PeakSize();
-        if (peak_size > 1024 * 1024) {
-          // allocate a block for the peak_size and free it
-          // this essentially creates a spare buffer
-          arena->Free(arena->Reserve(peak_size));
-        }
-      }
-    }
-
     mem_patterns_[key] = std::move(mem_patterns);
   }
 

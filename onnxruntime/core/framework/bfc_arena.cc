@@ -5,20 +5,21 @@
 
 namespace onnxruntime {
 BFCArena::BFCArena(std::unique_ptr<IDeviceAllocator> resource_allocator,
-                   size_t total_memory)
-    : BFCArena(*resource_allocator, total_memory) {
-  owned_device_allocator_ = std::move(resource_allocator);
-}
-
-BFCArena::BFCArena(IDeviceAllocator& resource_allocator,
-                   size_t total_memory)
-    : device_allocator_(&resource_allocator),
+                   size_t total_memory,
+                   const Config& config)
+    : device_allocator_(std::move(resource_allocator)),
       free_chunks_list_(kInvalidChunkHandle),
       next_allocation_id_(1),
       info_(device_allocator_->Info().name, OrtAllocatorType::OrtArenaAllocator,
-            device_allocator_->Info().device, device_allocator_->Info().id, device_allocator_->Info().mem_type) {
-  LOGS_DEFAULT(INFO) << "Creating BFCArena for " << device_allocator_->Info().name;
-  curr_region_allocation_bytes_ = RoundedBytes(std::min(total_memory, size_t{1048576}));
+            device_allocator_->Info().device, device_allocator_->Info().id, device_allocator_->Info().mem_type),
+      config_(config),
+      verbose_logging_(onnxruntime::logging::LoggingManager::DefaultLogger()
+                           .OutputIsEnabled(logging::Severity::kVERBOSE, logging::DataType::SYSTEM)) {
+  LOGS_DEFAULT(INFO) << "Creating BFCArena for " << info_.name;
+  ORT_ENFORCE(config_.growth_factor >= 1.f);
+  ORT_ENFORCE(config_.growth_factor > 1.f || config_.growth_add > 0);
+
+  next_region_allocation_bytes_ = RoundedBytes(std::min(total_memory, config_.initial_size));
 
   // Allocate the requested amount of memory.
   memory_limit_ = total_memory;
@@ -43,17 +44,14 @@ BFCArena::BFCArena(IDeviceAllocator& resource_allocator,
 }
 
 BFCArena::~BFCArena() {
+  LOGS_DEFAULT(INFO) << "Arena for " << info_.name << " shutting down.";
+  if (verbose_logging_) {
+    DumpMemoryLog(0);
+  }
+
   for (const auto& region : region_manager_.regions()) {
     device_allocator_->Free(region.ptr());
   }
-
-  for (const auto& reserve_chunk : reserved_chunks_) {
-    device_allocator_->Free(reserve_chunk.first);
-  }
-
-  //for (const auto& reserve_chunk : free_reserved_chunks_) {
-  //  device_allocator_->Free(reserve_chunk.first);
-  //}
 
   for (BinNum b = 0; b < kNumBins; b++) {
     BinFromIndex(b)->~Bin();
@@ -79,38 +77,40 @@ bool BFCArena::Extend(size_t rounded_bytes, bool is_reserve) {
   size_t bytes = 0;
   bool increased_allocation = false;
 
-  auto increase_next_alloc_size = [this]() {
-    // possible values
-    // Initial is 1MB
-    // 2MB, 4MB, 8MB, 16MB, multiples of 16MB
-    // This essentially high watermarks on the largest allocation required but limits growth to 16MB increments
-    // to avoid one large allocation causing large amounts of wasted memory.
-    if (curr_region_allocation_bytes_ < 16 * 1024 * 1024)
-      curr_region_allocation_bytes_ *= 2;
-    else
-      curr_region_allocation_bytes_ += 16 * 1024 * 1024;
+  // arbitrary value to round allocations to. the default initial size is 1MB, so rounding to 1MB.
+  constexpr size_t one_mb_minus_1 = 1024 * 1024 - 1;
+
+  auto find_next_alloc_size = [this](size_t required_bytes, size_t next_alloc_size) {
+    while (required_bytes > next_alloc_size) {
+      next_alloc_size = size_t(next_alloc_size * config_.growth_factor) + config_.growth_add;
+      // round in case growth_factor wasn't an even number
+      next_alloc_size = (next_alloc_size + (one_mb_minus_1)) & ~one_mb_minus_1;
+    }
+
+    return next_alloc_size;
   };
 
   if (is_reserve) {
-    // round to 1MB so somewhat consistent with curr_region_allocation_bytes_ which is a multiple of 1MB
-    const size_t one_mb_minus_1 = 1024 * 1024 - 1;
+    // just round to 1MB for consistency and don't use find_next_alloc_size.
     bytes = (rounded_bytes + (one_mb_minus_1)) & ~one_mb_minus_1;
-
-    // bytes = std::max(bytes, curr_region_allocation_bytes_);
-    bytes = std::min(bytes, available_bytes);
   } else {
-    // If curr_region_allocation_bytes_ is not enough to satisfy the
-    // allocation, keep multiplying by a power of two until that is
-    // sufficient.
-    while (rounded_bytes > curr_region_allocation_bytes_) {
-      // curr_region_allocation_bytes_ *= 2;
-      increase_next_alloc_size();
-      increased_allocation = true;
-    }
+    size_t next_alloc_size = next_region_allocation_bytes_;
+    bytes = find_next_alloc_size(rounded_bytes, next_alloc_size);
+    increased_allocation = bytes > next_alloc_size;
 
-    // Try allocating.
-    bytes = std::min(curr_region_allocation_bytes_, available_bytes);
+    if (increased_allocation) {
+      // we skipped over one of the size increments in order to do this allocation, so next time allocate
+      // another buffer of the same size instead of growing again.
+      next_region_allocation_bytes_ = bytes;
+    } else {
+      // update next_region_allocation_bytes_ to the next incremental size by requesting a size one larger than
+      // the current size
+      next_region_allocation_bytes_ = find_next_alloc_size(next_region_allocation_bytes_ + 1,
+                                                           next_region_allocation_bytes_);
+    }
   }
+
+  bytes = std::min(bytes, available_bytes);
 
   auto safe_alloc = [this](size_t alloc_bytes) {
     void* new_mem = nullptr;
@@ -149,24 +149,15 @@ bool BFCArena::Extend(size_t rounded_bytes, bool is_reserve) {
     ORT_THROW("Failed to allocate memory for requested buffer of size ", rounded_bytes);
   }
 
-  // if we didn't update already, increase how much we grow by next time
-  if (!is_reserve && !increased_allocation) {
-    increase_next_alloc_size();
-    // curr_region_allocation_bytes_ *= 2;
-  }
-
-  LOGS_DEFAULT(INFO) << "Extended allocation by " << bytes
-                     << " bytes.";
+  LOGS_DEFAULT(INFO) << "Extended allocation for " << info_.name << "by " << bytes
+                     << " bytes. Allocated memory at " << mem_addr << " to "
+                     << static_cast<void*>(static_cast<char*>(mem_addr) + bytes);
 
   stats_.total_allocated_bytes += bytes;
-  LOGS_DEFAULT(INFO) << "Total allocated bytes: "
-                     << stats_.total_allocated_bytes;
 
-  LOGS_DEFAULT(INFO) << "Allocated memory at " << mem_addr << " to "
-                     << static_cast<void*>(static_cast<char*>(mem_addr) + bytes);
+  LOGS_DEFAULT(INFO) << stats_.DebugString();
+
   region_manager_.AddAllocationRegion(mem_addr, bytes);
-
-  DumpMemoryLog(bytes);
 
   // Create one large chunk for the whole memory space that will
   // be chunked later.
@@ -223,55 +214,9 @@ void* BFCArena::Reserve(size_t size) {
   if (size == 0)
     return nullptr;
 
-  std::lock_guard<OrtMutex> lock(lock_);
-  if (!reserved_arena_) {
-    LOGS_DEFAULT(INFO) << "Creating arena for block allocations";
-    // private ctor so can't use std::make_unique
-    reserved_arena_.reset(new BFCArena(*device_allocator_, memory_limit_));
-  }
+  LOGS_DEFAULT(INFO) << "Allocating " << size << " bytes.";
 
-  void* buffer = reserved_arena_->Alloc(size);
-  reserved_chunks_.insert({buffer, size});
-  return buffer;
-
-  //// round to 1MB boundary
-  //const size_t one_mb_minus_1 = 1024 * 1024 - 1;
-  //size_t rounded_bytes = (size + (one_mb_minus_1)) & ~one_mb_minus_1;
-  //LOGS_DEFAULT(INFO) << "Reserve allocating " << rounded_bytes << " bytes via Extend.";
-
-  //return AllocateRawInternal(rounded_bytes, false, true);
-
-  /*
-
-    //for (const auto& entry : free_reserved_chunks_) {
-  for (auto cur = free_reserved_chunks_.begin(), end = free_reserved_chunks_.end(); cur != end; ++cur) {
-    auto excess = cur->second - size;
-    if (excess >= 0) {
-      auto percent_excess = excess / cur->second;
-      if (percent_excess < 0.10) {
-        // use this item is it's less than 10% larger than the requested size
-        reserved_chunks_.insert(*cur);
-        stats_.bytes_in_use += size;
-        stats_.max_bytes_in_use = std::max<size_t>(stats_.max_bytes_in_use, stats_.bytes_in_use);
-        free_reserved_chunks_.erase(cur);
-        return cur->first;
-      }
-    }
-  }
-
-  std::lock_guard<OrtMutex> lock(lock_);
-  void* ptr = device_allocator_->Alloc(size);
-  LOGS_DEFAULT(INFO) << "Reserve allocated " << size << " bytes.";
-
-  ORT_ENFORCE(reserved_chunks_.find(ptr) == reserved_chunks_.end());
-  reserved_chunks_.insert(std::pair<void*, size_t>(ptr, size));
-  stats_.bytes_in_use += size;
-  stats_.num_allocs += 1;
-  stats_.max_alloc_size = std::max<size_t>(stats_.max_alloc_size, size);
-  stats_.max_bytes_in_use = std::max<size_t>(stats_.max_bytes_in_use, stats_.bytes_in_use);
-  stats_.total_allocated_bytes += size;
-  return ptr;
-  */
+  return AllocateRawInternal(size, false, true);
 }
 
 size_t BFCArena::RequestedSize(const void* ptr) {
@@ -317,7 +262,13 @@ void* BFCArena::AllocateRawInternal(size_t num_bytes,
   // Try to extend
   if (Extend(rounded_bytes, is_reserve)) {
     ptr = FindChunkPtr(bin_num, rounded_bytes, num_bytes, is_reserve);
+
     if (ptr != nullptr) {
+      // dump memory log post-FindChunkPtr so the usage of the newly required memory is included
+      if (verbose_logging_) {
+        DumpMemoryLog(rounded_bytes);
+      }
+
       return ptr;
     }
   }
@@ -342,6 +293,8 @@ void BFCArena::GetStats(AllocatorStats* stats) {
 }
 
 void* BFCArena::FindChunkPtr(BinNum bin_num, size_t rounded_bytes, size_t num_bytes, bool is_reserve) {
+  ORT_UNUSED_PARAMETER(is_reserve);
+
   // First identify the first bin that could satisfy rounded_bytes.
   for (; bin_num < kNumBins; bin_num++) {
     // Start searching from the first bin for the smallest chunk that fits
@@ -358,11 +311,9 @@ void* BFCArena::FindChunkPtr(BinNum bin_num, size_t rounded_bytes, size_t num_by
         RemoveFreeChunkIterFromBin(&b->free_chunks, citer);
 
         // If we can break the size of the chunk into two reasonably large
-        // pieces, do so.  In any case don't waste more than
-        // kMaxInternalFragmentation bytes on padding this alloc.
-        const int64_t kMaxInternalFragmentation = 1 << 20;  // 128mb
+        // pieces, do so.
         if (chunk->size >= rounded_bytes * 2 ||
-            static_cast<int64_t>(chunk->size) - rounded_bytes >= kMaxInternalFragmentation) {
+            static_cast<size_t>(chunk->size) - rounded_bytes >= config_.min_split_remainder) {
           SplitChunk(h, rounded_bytes);
           chunk = ChunkFromHandle(h);  // Update chunk pointer in case it moved
         }
@@ -376,20 +327,12 @@ void* BFCArena::FindChunkPtr(BinNum bin_num, size_t rounded_bytes, size_t num_by
         // Update stats.
         ++stats_.num_allocs;
         stats_.bytes_in_use += chunk->size;
-        stats_.max_bytes_in_use =
-            std::max(stats_.max_bytes_in_use, stats_.bytes_in_use);
-        stats_.max_alloc_size =
-            std::max<std::size_t>(stats_.max_alloc_size, chunk->size);
+        stats_.max_bytes_in_use = std::max(stats_.max_bytes_in_use, stats_.bytes_in_use);
+        stats_.max_alloc_size = std::max<std::size_t>(stats_.max_alloc_size, chunk->size);
 
         return chunk->ptr;
       }
     }
-
-    // if this is from Reserve we only want to use a chunk from the first bin so that we're not splitting chunks
-    // from larger bins. TODO: Explain or determine if tracking output sizes and including that somewhere to prevent
-    // just exceeding the arena size due to the Reserve splitting a large chunk is better.
-    if (is_reserve)
-      break;
   }
 
   return nullptr;
@@ -435,33 +378,7 @@ void BFCArena::Free(void* p) {
     return;
   }
   std::lock_guard<OrtMutex> lock(lock_);
-  auto it = reserved_chunks_.find(p);
-  if (it != reserved_chunks_.end()) {
-    // device_allocator_->Free(it->first);
-    reserved_arena_->Free(p);
-
-    //stats_.bytes_in_use -= it->second;
-    //stats_.total_allocated_bytes -= it->second;
-
-    /*
-    stats_.bytes_in_use -= it->second;
-    // stats_.total_allocated_bytes -= it->second;
-    free_reserved_chunks_.push_front({*it});
-    */
-
-    reserved_chunks_.erase(it);
-
-    /*
-    if (free_reserved_chunks_.size() > 5) {
-      const auto& oldest = free_reserved_chunks_.back();
-      device_allocator_->Free(oldest.first);
-      stats_.total_allocated_bytes -= oldest.second;
-      free_reserved_chunks_.pop_back();
-    }
-    */
-  } else {
-    DeallocateRawInternal(p);
-  }
+  DeallocateRawInternal(p);
 }
 
 void BFCArena::DeallocateRawInternal(void* ptr) {
@@ -587,8 +504,7 @@ void BFCArena::FreeAndMaybeCoalesce(BFCArena::ChunkHandle h) {
   InsertFreeChunkIntoBin(chunk_to_reassign);
 }
 
-std::array<BFCArena::BinDebugInfo, BFCArena::kNumBins>
-BFCArena::get_bin_debug_info() {
+std::array<BFCArena::BinDebugInfo, BFCArena::kNumBins> BFCArena::get_bin_debug_info() {
   std::array<BinDebugInfo, kNumBins> bin_infos;
   for (const auto& region : region_manager_.regions()) {
     ChunkHandle h = region_manager_.get_handle(region.ptr());
@@ -683,12 +599,5 @@ void BFCArena::DumpMemoryLog(size_t num_bytes) {
   LOGS_DEFAULT(INFO) << "Sum Total of in-use chunks: " << total_bytes;
   LOGS_DEFAULT(INFO) << "Stats: \n"
                      << stats_.DebugString();
-
-  if (reserved_arena_) {
-    LOGS_DEFAULT(INFO) << "=== Reserve Arena ===";
-    reserved_arena_->DumpMemoryLog(0);
-    LOGS_DEFAULT(INFO) << "=== Summary stats ===";
-    LOGS_DEFAULT(INFO) << stats_.DebugString(reserved_arena_->stats_);
-  }
 }
 }  // namespace onnxruntime

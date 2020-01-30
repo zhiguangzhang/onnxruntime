@@ -1076,13 +1076,13 @@ Status InferenceSession::Run(const RunOptions& run_options, const std::vector<st
   // info all execution providers InferenceSession:Run ended
   std::cout << "Stats at end of execution\n";
   for (auto* xp : exec_providers_to_stop) {
-    auto alloc = xp->GetAllocator(0, OrtMemTypeDefault);
-    BFCArena* arena = dynamic_cast<BFCArena*>(alloc.get());
-    if (arena) {
-      // TODO: GetStats should be const...
-      AllocatorStats tmp;
-      arena->GetStats(&tmp);
-    }
+    //auto alloc = xp->GetAllocator(0, OrtMemTypeDefault);
+    //BFCArena* arena = dynamic_cast<BFCArena*>(alloc.get());
+    //if (arena) {
+    //  // TODO: GetStats should be const...
+    //  AllocatorStats tmp;
+    //  arena->GetStats(&tmp);
+    //}
 
     auto status = xp->OnRunEnd();
     ORT_CHECK_AND_SET_RETVAL(status);

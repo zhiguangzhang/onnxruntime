@@ -48,7 +48,27 @@ namespace onnxruntime {
 // all requests to allocate memory go through this interface.
 class BFCArena : public IArenaAllocator {
  public:
-  BFCArena(std::unique_ptr<IDeviceAllocator> resource_allocator, size_t total_memory);
+  struct Config {
+    // The growth pattern of the arena can be controlled between setting the initial size and the growth variables.
+    // When the arena needs to extend, the number of bytes to allocate will start with the previous size it extended
+    // by and increase using the following calculation until the size is large enough to satisfy the request that
+    // triggered the extension.
+    //   bytes_to_allocate = bytes_to_allocate * growth_factor + growth_add
+    //
+    // Default is to grow by allocating double the previous chunk size, with the first chunk size being initial_size.
+    // Alternatively the growth can be linear by setting growth_factor to 1 and using growth_add.
+    size_t initial_size = 1 * 1024 * 1024;  // initial allocation size. larger is better in terms of preventing fragmentation.
+    float growth_factor = 2;                // when arena needs to be extended, multiply current size by this
+    size_t growth_add = 0;                  // when arena needs to be extended, add this amount
+
+    // minimum size of unused chunk when splitting a chunk if less than half of the chunk will remain.
+    // if the remainder would be too small the original chunk will not be split.
+    //   e.g. if splitting an 8MB chunk, min_split_remainder must be smaller than the unused memory after the split
+    //        if the unused memory is < 4MB (smaller than half the original chunk size)
+    size_t min_split_remainder = 1 * 1024 * 1024;
+  };
+
+  BFCArena(std::unique_ptr<IDeviceAllocator> resource_allocator, size_t total_memory, const Config& config = {});
 
   ~BFCArena() override;
 
@@ -86,8 +106,6 @@ class BFCArena : public IArenaAllocator {
   size_t AllocatedSize(const void* ptr);
 
  private:
-  BFCArena(IDeviceAllocator& resource_allocator, size_t total_memory);
-
   void* AllocateRawInternal(size_t num_bytes, bool dump_log_on_failure, bool is_reserve = false);
   void DeallocateRawInternal(void* ptr);
 
@@ -421,11 +439,10 @@ class BFCArena : public IArenaAllocator {
 
   char bins_space_[sizeof(Bin) * kNumBins];
 
-  // The size of the current region allocation.
-  size_t curr_region_allocation_bytes_;
+  // The size of the next region to allocate in Extend.
+  size_t next_region_allocation_bytes_;
 
-  std::unique_ptr<IDeviceAllocator> owned_device_allocator_;
-  IDeviceAllocator* device_allocator_;
+  std::unique_ptr<IDeviceAllocator> device_allocator_;
 
   mutable OrtMutex lock_;
 
@@ -442,10 +459,9 @@ class BFCArena : public IArenaAllocator {
 
   OrtMemoryInfo info_;
 
-  std::unordered_map<void*, size_t> reserved_chunks_;
-  // std::list<std::pair<void*, size_t>> free_reserved_chunks_;
+  Config config_;
 
-  std::unique_ptr<BFCArena> reserved_arena_;
+  const bool verbose_logging_;
 
   ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(BFCArena);
 };

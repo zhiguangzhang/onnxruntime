@@ -279,17 +279,16 @@ Status SequentialExecutor::Execute(const SessionState& session_state, const std:
     session_state.Profiler().EndTimeAndRecordEvent(profiling::SESSION_EVENT, "SequentialExecutor::Execute", tp);
   }
 
-  std::cout << "Stats prior to free of ExecutionFrame\n";
-
-  for (auto& xp : session_state.GetExecutionProviders()) {
-    auto alloc = xp->GetAllocator(0, OrtMemTypeDefault);
-    BFCArena* arena = dynamic_cast<BFCArena*>(alloc.get());
-    if (arena) {
-      // TODO: GetStats should be const...
-      AllocatorStats tmp;
-      arena->GetStats(&tmp);
-    }
-  }
+  //std::cout << "Stats prior to free of ExecutionFrame\n";
+  //for (auto& xp : session_state.GetExecutionProviders()) {
+  //  auto alloc = xp->GetAllocator(0, OrtMemTypeDefault);
+  //  BFCArena* arena = dynamic_cast<BFCArena*>(alloc.get());
+  //  if (arena) {
+  //    // TODO: GetStats should be const...
+  //    AllocatorStats tmp;
+  //    arena->GetStats(&tmp);
+  //  }
+  //}
 
   return Status::OK();
 }
