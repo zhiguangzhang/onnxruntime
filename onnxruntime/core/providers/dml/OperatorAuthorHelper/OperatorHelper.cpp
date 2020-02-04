@@ -6,36 +6,36 @@
 
 namespace OperatorHelper
 {
-bool ContainsEmptyDimensions(gsl::span<const DimensionType> dimensions)
-{
-    return std::find(dimensions.begin(), dimensions.end(), 0) != dimensions.end();
-}
-
-// Convert any negative axis into an absolute axis relative to the back end.
-// So given 3 dimensions, a -1 refers to axis 2, and -3 to axis 0.
-uint32_t HandleNegativeAxis(int32_t signedOnnxAxis, uint32_t dimCount)
-{
-    if (signedOnnxAxis < 0)
+    bool ContainsEmptyDimensions(gsl::span<const DimensionType> dimensions)
     {
-        signedOnnxAxis += dimCount;
+        return std::find(dimensions.begin(), dimensions.end(), 0) != dimensions.end();
     }
-    uint32_t absoluteAxis = gsl::narrow_cast<uint32_t>(signedOnnxAxis);
-    ML_CHECK_VALID_ARGUMENT(absoluteAxis < dimCount);
-    return absoluteAxis;
-}
 
-void HandleNegativeAxes(gsl::span<int32_t> onnxAxes, uint32_t dimCount)
-{
-    for (int32_t& axis : onnxAxes)
+    // Convert any negative axis into an absolute axis relative to the back end.
+    // So given 3 dimensions, a -1 refers to axis 2, and -3 to axis 0.
+    uint32_t HandleNegativeAxis(int32_t signedOnnxAxis, uint32_t dimCount)
     {
-        axis = HandleNegativeAxis(axis, dimCount);
+        if (signedOnnxAxis < 0)
+        {
+            signedOnnxAxis += dimCount;
+        }
+        uint32_t absoluteAxis = gsl::narrow_cast<uint32_t>(signedOnnxAxis);
+        ML_CHECK_VALID_ARGUMENT(absoluteAxis < dimCount);
+        return absoluteAxis;
     }
-}
 
-int64_t ReadAsInt64(MLOperatorTensorDataType tensorDataType, const void* p)
-{
-    switch (tensorDataType)
+    void HandleNegativeAxes(gsl::span<int32_t> onnxAxes, uint32_t dimCount)
     {
+        for (int32_t& axis : onnxAxes)
+        {
+            axis = HandleNegativeAxis(axis, dimCount);
+        }
+    }
+
+    int64_t ReadAsInt64(MLOperatorTensorDataType tensorDataType, const void* p)
+    {
+        switch (tensorDataType)
+        {
         case MLOperatorTensorDataType::Float:      return static_cast<int64_t>(*reinterpret_cast<const float*>(p));
         case MLOperatorTensorDataType::UInt8:      return static_cast<int64_t>(*reinterpret_cast<const uint8_t*>(p));
         case MLOperatorTensorDataType::Int8:       return static_cast<int64_t>(*reinterpret_cast<const int8_t*>(p));
@@ -54,6 +54,26 @@ int64_t ReadAsInt64(MLOperatorTensorDataType tensorDataType, const void* p)
         case MLOperatorTensorDataType::Undefined:
         default: ML_INVALID_ARGUMENT("Unknown MLOperatorTensorDataType.");
         };
+    }
+
+    std::vector<uint32_t> Read1DTensor64BitTo32Bit(MLOperatorTensor const& tensor)
+    {
+        std::vector<uint32_t> dimensions = tensor.GetShape();
+        ML_CHECK_VALID_ARGUMENT(dimensions.size() == 1, "The shape tensor must be 1D.");
+
+        const int64_t* data = tensor.GetData<int64_t>();
+        const uint32_t count = gsl::narrow_cast<int32_t>(dimensions[0]);
+
+        std::vector<DimensionType> values;
+        values.reserve(count);
+
+        // First element of shape tensor is how many dims to expand to.
+        for (int64_t dim : gsl::make_span(data, count))
+        {
+            values.push_back(gsl::narrow_cast<uint32_t>(dim));
+        }
+
+        return values;
     }
 
     // Calculates the spatial dimensions from input dimensions and a kernel. The non-spatial (leading)
@@ -973,6 +993,26 @@ int64_t ReadAsInt64(MLOperatorTensorDataType tensorDataType, const void* p)
         return { std::move(EdgeShapes(outputDimensions)) };
     }
 
+    std::vector<EdgeShapes> MaxUnpoolingHelper::GetOutputShapes(const MLShapeInferenceContext& shapeInfo) const
+    {
+        std::vector<uint32_t> outputDimensions;
+
+        // If the 'output_shape' tensor is given, use it directly.
+        // Otherwise derive the shape from the padding and strides.
+        if (shapeInfo.IsInputValid(2))
+        {
+            MLOperatorTensor dimensionsTensor = shapeInfo.GetConstantInputTensor(2);
+            outputDimensions = std::move(Read1DTensor64BitTo32Bit(dimensionsTensor));
+        }
+        else
+        {
+            auto inputShape = shapeInfo.GetInputTensorShape(0);
+            outputDimensions = std::move(InitializeKernelOutputDimsTranspose(inputShape, m_kernel));
+        }
+
+        return { std::move(outputDimensions) };
+    }
+
     std::vector<EdgeShapes> SqueezeHelper::GetOutputShapes(const MLShapeInferenceContext& shapeInfo) const
     {
         auto outputDimensions = shapeInfo.GetInputTensorShape(0);
@@ -1088,29 +1128,17 @@ int64_t ReadAsInt64(MLOperatorTensorDataType tensorDataType, const void* p)
 
     std::vector<EdgeShapes> ExpandHelper::GetOutputShapes(const MLShapeInferenceContext& shapeInfo) const
     {
-        std::vector<uint32_t> outputDimensions;
 
         // The 'shape' tensor is a 1D tensor holding the new shape to expand to,
         // and the first element of its own shape holds how many dimensions there
-        // will be for the output.
+        // will be for the output. We also need the input tensor shape to broadcast
+        // it to the desired output shape.
 
         std::vector<uint32_t> actualInputTensorShape = shapeInfo.GetInputTensorShape(0);
-        std::vector<uint32_t> shapeTensorDimensions = shapeInfo.GetInputTensorShape(1);
-        ML_CHECK_VALID_ARGUMENT(shapeTensorDimensions.size() == 1, "Expand's shape tensor must be 1D.");
-        const size_t dimCount = shapeTensorDimensions[0];
 
-        MLOperatorTensor shapeTensor = shapeInfo.GetConstantInputTensor(1);
-        const int64_t* shapeData = shapeTensor.GetData<int64_t>();
-
-        // First element of shape tensor is how many dims to expand to.
-        std::vector<uint32_t> desiredTensorShape;
-        for (int64_t dim : gsl::make_span(shapeData, dimCount))
-        {
-            desiredTensorShape.push_back(gsl::narrow_cast<uint32_t>(dim));
-        }
-
-        // Determine the broadcasted input shape.
-        outputDimensions = OperatorHelper::BroadcastTensorShape(actualInputTensorShape, desiredTensorShape);
+        MLOperatorTensor dimensionsTensor = shapeInfo.GetConstantInputTensor(1);
+        std::vector<uint32_t> desiredTensorShape = std::move(Read1DTensor64BitTo32Bit(dimensionsTensor));
+        std::vector<uint32_t> outputDimensions = OperatorHelper::BroadcastTensorShape(actualInputTensorShape, desiredTensorShape);
         
         return { std::move(EdgeShapes(outputDimensions)) };
     }
@@ -1123,19 +1151,8 @@ int64_t ReadAsInt64(MLOperatorTensorDataType tensorDataType, const void* p)
         // and the first element of its own shape holds how many dimensions there
         // will be for the output.
 
-        std::vector<uint32_t> shapeTensorDimensions = shapeInfo.GetInputTensorShape(0);
-        ML_CHECK_VALID_ARGUMENT(shapeTensorDimensions.size() == 1, "ConstantOfShapeHelper's shape tensor must be 1D.");
-        const size_t dimCount = shapeTensorDimensions[0];
-
-        MLOperatorTensor shapeTensor = shapeInfo.GetConstantInputTensor(0);
-        const int64_t* shapeData = shapeTensor.GetData<int64_t>();
-
-        // First element of shape tensor is how many dims to expand to.
-        std::vector<uint32_t> desiredTensorShape;
-        for (int64_t dim : gsl::make_span(shapeData, dimCount))
-        {
-            desiredTensorShape.push_back(gsl::narrow_cast<uint32_t>(dim));
-        }
+        MLOperatorTensor dimensionsTensor = shapeInfo.GetConstantInputTensor(0);
+        std::vector<uint32_t> desiredTensorShape = std::move(Read1DTensor64BitTo32Bit(dimensionsTensor));
 
         return { std::move(EdgeShapes(desiredTensorShape)) };
     }

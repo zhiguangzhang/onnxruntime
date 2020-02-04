@@ -856,6 +856,26 @@ protected:
     uint32_t m_pooledSizeH;
 };
 
+class MaxUnpoolingHelper
+{
+public:
+    // Info_t is used to obtain attributes which will be used for calculating the output shape later. 
+    // Shape_t is used to obtain input shape which will be used for adjusting attribute value. 
+    template<typename Info_t, typename Shape_t>
+    MaxUnpoolingHelper(
+        const Info_t& info,
+        const Shape_t& shape
+    ) : m_kernel(InitializeKernel(info, static_cast<uint32_t>(shape.GetInputTensorShape(0).size()), gsl::span<uint32_t>()))
+    {
+        // MaxUnpool has no auto padding to worry about.
+    }
+
+    std::vector<EdgeShapes> GetOutputShapes(const MLShapeInferenceContext& shapeInfo) const;
+
+protected:
+    KernelArgs m_kernel;
+};
+
 class SqueezeHelper
 {
 public:
@@ -1239,5 +1259,7 @@ using ShapeInferenceHelper_FusedGemm = GemmHelper;
 using ShapeInferenceHelper_FusedMatMul = MatMulHelper;
 using ShapeInferenceHelper_FusedAdd = GetBroadcastedOutputShapeHelper;
 using ShapeInferenceHelper_FusedSum = GetBroadcastedOutputShapeHelper;
+
+using ShapeInferenceHelper_MaxUnpool = MaxUnpoolingHelper;
 
 } // namespace OperatorHelper

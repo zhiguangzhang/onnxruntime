@@ -553,6 +553,16 @@ public:
         return m_impl;
     }
 
+    bool IsInputValid(uint32_t inputIndex) const noexcept
+    {
+        return m_impl->IsInputValid(inputIndex);
+    }
+
+    bool IsOutputValid(uint32_t outputIndex) const noexcept
+    {
+        return m_impl->IsOutputValid(outputIndex);
+    }
+
     uint32_t GetInputCount() const noexcept
     {
         return m_impl->GetInputCount();
