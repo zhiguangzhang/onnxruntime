@@ -70,7 +70,7 @@ if (onnxruntime_USE_MIMALLOC)
     endif()
 endif()
 
-onnxruntime_add_include_to_target(onnxruntime_common date_interface)
+onnxruntime_add_include_to_target(onnxruntime_common date::date)
 target_include_directories(onnxruntime_common PRIVATE ${CMAKE_CURRENT_BINARY_DIR} ${ONNXRUNTIME_ROOT}
         PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/external/nsync/public")
 if(onnxruntime_USE_NSYNC)

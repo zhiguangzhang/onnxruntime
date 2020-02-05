@@ -26,10 +26,10 @@ limitations under the License.
 
 namespace onnxruntime {
 
-template <typename T, bool use_log>
+template <typename T>
 class Softmax final : public OpKernel {
  public:
-  Softmax(const OpKernelInfo& info) : OpKernel{info}, axis_{1} {
+  Softmax(const OpKernelInfo& info) : OpKernel{info}, axis_{1}, use_log(info.node().OpType() == "LogSoftmax") {
     int64_t axis;
     Status status = info.GetAttr<int64_t>("axis", &axis);
 
@@ -61,22 +61,30 @@ class Softmax final : public OpKernel {
     int N = static_cast<int>(input_shape.SizeToDimension(axis));
     int D = static_cast<int>(input_shape.SizeFromDimension(axis));
 
-    Eigen::TensorMap<Eigen::Tensor<const float, 2, Eigen::RowMajor, Eigen::DenseIndex>, Eigen::Aligned> X_tensor(
-        X.Data<float>(), N, D);
-    Eigen::TensorMap<Eigen::Tensor<float, 2, Eigen::RowMajor, Eigen::DenseIndex>, Eigen::Aligned> Y_tensor(
-        Y->MutableData<float>(), N, D);
+    Eigen::TensorMap<Eigen::Tensor<const T, 2, Eigen::RowMajor, Eigen::DenseIndex>, Eigen::Aligned> X_tensor(
+        X.Data<T>(), N, D);
+    Eigen::TensorMap<Eigen::Tensor<T, 2, Eigen::RowMajor, Eigen::DenseIndex>, Eigen::Aligned> Y_tensor(
+        Y->MutableData<T>(), N, D);
 #ifndef USE_OPENMP
-    if (tp == nullptr)
+    if (tp == nullptr) {
 #endif
-      ComputeSoftMax<use_log>(Eigen::DefaultDevice(), X_tensor, Y_tensor, N, D);
+      if (use_log)
+        ComputeLogSoftMax(Eigen::DefaultDevice(), X_tensor, Y_tensor, N, D);
+      else
+        ComputeSoftMax(Eigen::DefaultDevice(), X_tensor, Y_tensor, N, D);
 #ifndef USE_OPENMP
-    else
-      ComputeSoftMax<use_log>(Eigen::ThreadPoolDevice(&tp->GetHandler(), tp->NumThreads()), X_tensor, Y_tensor, N, D);
+    } else {
+      if (use_log)
+        ComputeLogSoftMax(Eigen::ThreadPoolDevice(&tp->GetHandler(), tp->NumThreads()), X_tensor, Y_tensor, N, D);
+      else
+        ComputeSoftMax(Eigen::ThreadPoolDevice(&tp->GetHandler(), tp->NumThreads()), X_tensor, Y_tensor, N, D);
+    }
 #endif
     return Status::OK();
   }
 
  private:
   int axis_;
+  const bool use_log;
 };
 }  // namespace onnxruntime
