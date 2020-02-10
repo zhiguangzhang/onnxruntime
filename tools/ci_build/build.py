@@ -1017,11 +1017,9 @@ def main():
             if args.use_dnnl:
               dnnl_run_onnx_tests(build_dir, configs, onnx_test_data_dir)
 
-            print("run_onnx_test no provider starts")
-            run_onnx_tests(build_dir, configs, onnx_test_data_dir, 'cpu', args.enable_multi_device_test, False,
+            run_onnx_tests(build_dir, configs, onnx_test_data_dir, None, args.enable_multi_device_test, False,
               1 if args.x86 or platform.system() == 'Darwin' else 0,
               1 if args.x86 or platform.system() == 'Darwin' else 0)
-            print("run_onnx_test no provider ends")
 
         # run nuphar python tests last, as it installs ONNX 1.5.0
         if args.enable_pybind and not args.skip_onnx_tests and args.use_nuphar:
