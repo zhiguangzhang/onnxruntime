@@ -644,13 +644,18 @@ def tensorrt_run_onnx_tests(args, build_dir, configs, onnx_test_data_dir):
         # model test
         # TensorRT can run most of the model tests, but only part of them is enabled here to save CI build time.
         if config != 'Debug' and os.path.exists(model_dir):
-          model_dir_opset8 = os.path.join(model_dir, "opset8")
-          model_dir_opset8 = glob.glob(os.path.join(model_dir_opset8, "test_*"))
           model_dir_opset10 = os.path.join(model_dir, "opset10")
           model_dir_opset10 = glob.glob(os.path.join(model_dir_opset10, "tf_inception_v1"))
-          for dir_path in itertools.chain(model_dir_opset8, model_dir_opset10):
+          for dir_path in itertools.chain(model_dir_opset10):
             model_test_cmd = cmd_base + [dir_path]
-            run_subprocess([exe] + model_test_cmd, cwd=cwd, dll_path=dll_path)
+            run_subprocess([exe] + model_test_cmd, cwd=cwd, dll_path=dll_path)        
+          # model_dir_opset8 = os.path.join(model_dir, "opset8")
+          # model_dir_opset8 = glob.glob(os.path.join(model_dir_opset8, "test_*"))
+          # model_dir_opset10 = os.path.join(model_dir, "opset10")
+          # model_dir_opset10 = glob.glob(os.path.join(model_dir_opset10, "tf_inception_v1"))
+          # for dir_path in itertools.chain(model_dir_opset8, model_dir_opset10):
+            # model_test_cmd = cmd_base + [dir_path]
+            # run_subprocess([exe] + model_test_cmd, cwd=cwd, dll_path=dll_path)
 
 # dnnl temporary function for running onnx tests and model tests separately.
 def dnnl_run_onnx_tests(build_dir, configs, onnx_test_data_dir):
@@ -938,8 +943,8 @@ def main():
             if args.use_tensorrt:
               # Disable some onnx unit tests that TensorRT doesn't supported yet
               if not is_windows():
-                onnx_test_data_dir = os.path.join(source_dir, "cmake", "external", "onnx", "onnx", "backend", "test", "data", "simple")
-                tensorrt_run_onnx_tests(args, build_dir, configs, onnx_test_data_dir)
+                trt_onnx_test_data_dir = os.path.join(source_dir, "cmake", "external", "onnx", "onnx", "backend", "test", "data", "simple")
+                tensorrt_run_onnx_tests(args, build_dir, configs, trt_onnx_test_data_dir)
               else:
                 tensorrt_run_onnx_tests(args, build_dir, configs, "")
 
@@ -963,7 +968,7 @@ def main():
               dnnl_run_onnx_tests(build_dir, configs, onnx_test_data_dir)
 
             print("run_onnx_test no provider starts")
-            run_onnx_tests(build_dir, configs, onnx_test_data_dir, None, args.enable_multi_device_test, False,
+            run_onnx_tests(build_dir, configs, onnx_test_data_dir, 'cpu', args.enable_multi_device_test, False,
               1 if args.x86 or platform.system() == 'Darwin' else 0,
               1 if args.x86 or platform.system() == 'Darwin' else 0)
             print("run_onnx_test no provider ends")
