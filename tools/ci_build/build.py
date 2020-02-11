@@ -691,10 +691,10 @@ def tensorrt_run_onnx_tests(args, build_dir, configs, onnx_test_data_dir, provid
           cmd_base += ["-e", provider] 
           
         if num_parallel_tests != 0:
-          cmd += ['-c', str(num_parallel_tests)]
+          cmd_base += ['-c', str(num_parallel_tests)]
 
         if num_parallel_models > 0:
-          cmd += ["-j", str(num_parallel_models)]
+          cmd_base += ["-j", str(num_parallel_models)]
 
         #onnx test
         if os.path.exists(onnx_test_data_dir):
