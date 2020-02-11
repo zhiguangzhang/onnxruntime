@@ -1001,11 +1001,12 @@ def main():
 
             if args.use_tensorrt:
               # Disable some onnx unit tests that TensorRT doesn't supported yet
-              if not is_windows():
-                trt_onnx_test_data_dir = os.path.join(source_dir, "cmake", "external", "onnx", "onnx", "backend", "test", "data", "simple")
-              else:
-                trt_onnx_test_data_dir = ""                 
-              tensorrt_run_onnx_tests(args, build_dir, configs, trt_onnx_test_data_dir, "tensorrt",1,1)                
+              #if not is_windows():
+              #  trt_onnx_test_data_dir = os.path.join(source_dir, "cmake", "external", "onnx", "onnx", "backend", "test", "data", "simple")
+              #else:
+              #  trt_onnx_test_data_dir = ""                 
+              #tensorrt_run_onnx_tests(args, build_dir, configs, trt_onnx_test_data_dir, "tensorrt",1,1) 
+              tensorrt_run_onnx_tests(args, build_dir, configs, onnx_test_data_dir, "tensorrt",1,1) 
 
             if args.use_cuda and not args.use_tensorrt:
               run_onnx_tests(build_dir, configs, onnx_test_data_dir, 'cuda', args.enable_multi_device_test, False, 2)           
