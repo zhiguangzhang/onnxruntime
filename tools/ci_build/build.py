@@ -1006,12 +1006,14 @@ def main():
               else:
                 trt_onnx_test_data_dir = ""   
                 
-              tensorrt_run_onnx_tests(args, build_dir, configs, trt_onnx_test_data_dir, "tensorrt", 
-                1 if args.x86 or platform.system() == 'Darwin' else 0,
-                1 if args.x86 or platform.system() == 'Darwin' else 0)               
-              tensorrt_run_onnx_tests(args, build_dir, configs, trt_onnx_test_data_dir, None, 
-                1 if args.x86 or platform.system() == 'Darwin' else 0,
-                1 if args.x86 or platform.system() == 'Darwin' else 0)
+              # tensorrt_run_onnx_tests(args, build_dir, configs, trt_onnx_test_data_dir, "tensorrt", 
+                # 1 if args.x86 or platform.system() == 'Darwin' else 0,
+                # 1 if args.x86 or platform.system() == 'Darwin' else 0)
+              # tensorrt_run_onnx_tests(args, build_dir, configs, onnx_test_data_dir, None, 
+                # 1 if args.x86 or platform.system() == 'Darwin' else 0,
+                # 1 if args.x86 or platform.system() == 'Darwin' else 0)                
+              tensorrt_run_onnx_tests(args, build_dir, configs, trt_onnx_test_data_dir, "tensorrt",1,1)                
+              tensorrt_run_onnx_tests(args, build_dir, configs, onnx_test_data_dir, None,1,1)
 
             if args.use_cuda and not args.use_tensorrt:
               run_onnx_tests(build_dir, configs, onnx_test_data_dir, 'cuda', args.enable_multi_device_test, False, 2)           
