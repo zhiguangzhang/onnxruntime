@@ -96,6 +96,7 @@ class SymbolicShapeInference:
             'Max'                   : self._infer_binary_ops,
             'Min'                   : self._infer_binary_ops,
             'Mul'                   : self._infer_binary_ops,
+            'Neg'                   : self._pass_on_shape_and_type,
             'NonMaxSuppression'     : self._infer_NonMaxSuppression,
             'NonZero'               : self._infer_NonZero,
             'OneHot'                : self._infer_OneHot,
@@ -878,7 +879,7 @@ class SymbolicShapeInference:
             if sizes is not None:
                 new_sympy_shape = [sympy.simplify(sympy.floor(s)) for s in sizes]
                 self._update_computed_dims(new_sympy_shape)
-            elif roi is not None and scales is not None:
+            elif roi is not None and len(roi) > 0 and scales is not None and len(scales) > 0:
                 rank = len(scales)
                 assert len(roi) == 2*rank
                 roi_start = list(roi)[:rank]

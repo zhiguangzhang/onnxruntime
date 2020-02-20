@@ -80,7 +80,7 @@ bool BFCArena::Extend(size_t rounded_bytes, bool is_reserve) {
   // arbitrary value to round allocations to. the default initial size is 1MB, so rounding to 1MB.
   constexpr size_t one_mb_minus_1 = 1024 * 1024 - 1;
 
-  auto find_next_alloc_size = [this](size_t required_bytes, size_t next_alloc_size) {
+  auto find_next_alloc_size = [this, one_mb_minus_1](size_t required_bytes, size_t next_alloc_size) {
     while (required_bytes > next_alloc_size) {
       next_alloc_size = size_t(next_alloc_size * config_.growth_factor) + config_.growth_add;
       // round in case growth_factor wasn't an even number
@@ -313,7 +313,7 @@ void* BFCArena::FindChunkPtr(BinNum bin_num, size_t rounded_bytes, size_t num_by
         // If we can break the size of the chunk into two reasonably large
         // pieces, do so.
         if (chunk->size >= rounded_bytes * 2 ||
-            static_cast<size_t>(chunk->size) - rounded_bytes >= config_.min_split_remainder) {
+            static_cast<size_t>(chunk->size) - rounded_bytes >= (128 * config_.min_split_remainder)) {
           SplitChunk(h, rounded_bytes);
           chunk = ChunkFromHandle(h);  // Update chunk pointer in case it moved
         }
