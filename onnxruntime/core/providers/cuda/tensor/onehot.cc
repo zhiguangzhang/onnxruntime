@@ -65,7 +65,7 @@ Status OneHotOp<in_type, out_type, depth_type>::ComputeInternal(OpKernelContext*
   const auto* indices_data = indices->Data<in_type>();
   auto* output_data = reinterpret_cast<CudaT_Out*>(output->MutableData<out_type>());
 
-  OneHotImpl(indices_data, fdm_depth_suffix, fdm_suffix, depth_val,
+  OneHotImpl(Stream(), indices_data, fdm_depth_suffix, fdm_suffix, depth_val,
              values_data[1],
              values_data[0],
              output_data,

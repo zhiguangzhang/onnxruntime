@@ -40,6 +40,7 @@ __global__ void _GatherElementsKernel(
 
 template <typename Tin>
 void GatherElementsImpl(
+    cudaStream_t stream,
     const int64_t rank,
     const void* input_data,
     const int64_t input_dim_along_axis,
@@ -57,28 +58,28 @@ void GatherElementsImpl(
 
     switch (element_size) {
       case sizeof(int8_t):
-         _GatherElementsKernel<int8_t, Tin><<<blocksPerGrid, GridDim::maxThreadsPerBlock, 0>>>(
+         _GatherElementsKernel<int8_t, Tin><<<blocksPerGrid, GridDim::maxThreadsPerBlock, 0, stream>>>(
             rank, reinterpret_cast<const ToCudaType<int8_t>::MappedType*>(input_data), input_dim_along_axis, input_strides,
             indices_data, indices_size, indices_strides,
             axis, reinterpret_cast<ToCudaType<int8_t>::MappedType*>(output_data));
         break;
 
       case sizeof(int16_t):
-        _GatherElementsKernel<int16_t, Tin><<<blocksPerGrid, GridDim::maxThreadsPerBlock, 0>>>(
+        _GatherElementsKernel<int16_t, Tin><<<blocksPerGrid, GridDim::maxThreadsPerBlock, 0, stream>>>(
             rank, reinterpret_cast<const ToCudaType<int16_t>::MappedType*>(input_data), input_dim_along_axis, input_strides,
             indices_data, indices_size, indices_strides,
             axis, reinterpret_cast<ToCudaType<int16_t>::MappedType*>(output_data));
         break;
 
       case sizeof(int32_t):
-        _GatherElementsKernel<int32_t, Tin><<<blocksPerGrid, GridDim::maxThreadsPerBlock, 0>>>(
+        _GatherElementsKernel<int32_t, Tin><<<blocksPerGrid, GridDim::maxThreadsPerBlock, 0, stream>>>(
             rank, reinterpret_cast<const ToCudaType<int32_t>::MappedType*>(input_data), input_dim_along_axis, input_strides,
             indices_data, indices_size, indices_strides,
             axis, reinterpret_cast<ToCudaType<int32_t>::MappedType*>(output_data));
         break;
 
       case sizeof(int64_t):
-        _GatherElementsKernel<int64_t, Tin><<<blocksPerGrid, GridDim::maxThreadsPerBlock, 0>>>(
+        _GatherElementsKernel<int64_t, Tin><<<blocksPerGrid, GridDim::maxThreadsPerBlock, 0, stream>>>(
             rank, reinterpret_cast<const ToCudaType<int64_t>::MappedType*>(input_data), input_dim_along_axis, input_strides,
             indices_data, indices_size, indices_strides,
             axis, reinterpret_cast<ToCudaType<int64_t>::MappedType*>(output_data));
@@ -92,6 +93,7 @@ void GatherElementsImpl(
 }
 
 template void GatherElementsImpl<int32_t>(
+    cudaStream_t stream,
     const int64_t rank,
     const void* input_data,
     const int64_t input_dim_along_axis,
@@ -104,6 +106,7 @@ template void GatherElementsImpl<int32_t>(
     size_t element_size);
 
 template void GatherElementsImpl<int64_t>(
+    cudaStream_t stream,
     const int64_t rank,
     const void* input_data,
     const int64_t input_dim_along_axis,

@@ -145,6 +145,7 @@ Status BinaryElementwise<ShouldBroadcast>::Prepare(OpKernelContext* context, Bin
     BinaryElementwisePreparation prepare;                                                                        \
     Prepare(context, &prepare);                                                                                  \
     Impl_##x<typename ToCudaType<T>::MappedType>(                                                                \
+        Stream(),                                                                                                \
         prepare.output_rank_or_simple_broadcast,                                                                 \
         &prepare.lhs_padded_strides,                                                                             \
         reinterpret_cast<const typename ToCudaType<T>::MappedType*>(prepare.lhs_tensor->template Data<T>()),     \
@@ -272,12 +273,13 @@ ONNX_OPERATOR_KERNEL_EX(
 
 namespace pow12_internal {
 template <class T>
-Status DispatchOnFirstArg(const BinaryElementwisePreparation& prepare) {
+Status DispatchOnFirstArg(cudaStream_t stream, const BinaryElementwisePreparation& prepare) {
   namespace on = ONNX_NAMESPACE;
   Status s;
   switch (prepare.rhs_tensor->GetElementType()) {
     case on::TensorProto_DataType_INT32:
       ImplT1_Pow<typename ToCudaType<T>::MappedType, typename ToCudaType<int32_t>::MappedType>(
+          stream,
           prepare.output_rank_or_simple_broadcast,
           &prepare.lhs_padded_strides,
           reinterpret_cast<const typename ToCudaType<T>::MappedType*>(prepare.lhs_tensor->template Data<T>()),
@@ -291,6 +293,7 @@ Status DispatchOnFirstArg(const BinaryElementwisePreparation& prepare) {
       break;
     case on::TensorProto_DataType_INT64:
       ImplT1_Pow<typename ToCudaType<T>::MappedType, typename ToCudaType<int64_t>::MappedType>(
+          stream,
           prepare.output_rank_or_simple_broadcast,
           &prepare.lhs_padded_strides,
           reinterpret_cast<const typename ToCudaType<T>::MappedType*>(prepare.lhs_tensor->template Data<T>()),
@@ -304,6 +307,7 @@ Status DispatchOnFirstArg(const BinaryElementwisePreparation& prepare) {
       break;
     case on::TensorProto_DataType_FLOAT:
       ImplT1_Pow<typename ToCudaType<T>::MappedType, typename ToCudaType<float>::MappedType>(
+          stream,
           prepare.output_rank_or_simple_broadcast,
           &prepare.lhs_padded_strides,
           reinterpret_cast<const typename ToCudaType<T>::MappedType*>(prepare.lhs_tensor->template Data<T>()),
@@ -317,6 +321,7 @@ Status DispatchOnFirstArg(const BinaryElementwisePreparation& prepare) {
       break;
     case on::TensorProto_DataType_DOUBLE:
       ImplT1_Pow<typename ToCudaType<T>::MappedType, typename ToCudaType<double>::MappedType>(
+          stream,
           prepare.output_rank_or_simple_broadcast,
           &prepare.lhs_padded_strides,
           reinterpret_cast<const typename ToCudaType<T>::MappedType*>(prepare.lhs_tensor->template Data<T>()),
@@ -346,16 +351,16 @@ Status Pow::ComputeInternal(OpKernelContext* context) const {
 
   switch (prepare.lhs_tensor->GetElementType()) {
     case on::TensorProto_DataType_INT32:
-      s = DispatchOnFirstArg<int32_t>(prepare);
+      s = DispatchOnFirstArg<int32_t>(Stream(), prepare);
       break;
     case on::TensorProto_DataType_INT64:
-      s = DispatchOnFirstArg<int64_t>(prepare);
+      s = DispatchOnFirstArg<int64_t>(Stream(), prepare);
       break;
     case on::TensorProto_DataType_FLOAT:
-      s = DispatchOnFirstArg<float>(prepare);
+      s = DispatchOnFirstArg<float>(Stream(), prepare);
       break;
     case on::TensorProto_DataType_DOUBLE:
-      s = DispatchOnFirstArg<double>(prepare);
+      s = DispatchOnFirstArg<double>(Stream(), prepare);
       break;
     default:
       s = ORT_MAKE_STATUS(ONNXRUNTIME, INVALID_ARGUMENT, "Unsupported X type: ",
@@ -376,7 +381,7 @@ Status VariadicInputBase<T, CudaT>::ComputeMethod(OpKernelContext* context, Impl
     const auto& input_shape = lhs_tensor->Shape();
     auto output_tensor = context->Output(0, input_shape);
     if (lhs_tensor->DataRaw() != output_tensor->DataRaw()) {
-      CUDA_RETURN_IF_ERROR(cudaMemcpyAsync(output_tensor->MutableDataRaw(), lhs_tensor->DataRaw(), sizeof(CudaT) * input_shape.Size(), cudaMemcpyDeviceToDevice));
+      CUDA_RETURN_IF_ERROR(cudaMemcpyAsync(output_tensor->MutableDataRaw(), lhs_tensor->DataRaw(), sizeof(CudaT) * input_shape.Size(), cudaMemcpyDeviceToDevice, Stream()));
     }
   } else {
     // compute output shape first, using broadcast rule
@@ -394,6 +399,7 @@ Status VariadicInputBase<T, CudaT>::ComputeMethod(OpKernelContext* context, Impl
       // special case for 2 tensors to avoid memset zero
       ORT_RETURN_IF_ERROR(BinaryElementwiseBroadcastPrepare(lhs_tensor, rhs_tensor, output_tensor, &prepare));
       Impl_Compute(
+          Stream(),
           prepare.output_rank_or_simple_broadcast,
           &prepare.lhs_padded_strides,
           reinterpret_cast<const CudaT*>(prepare.lhs_tensor->template Data<T>()),
@@ -406,10 +412,11 @@ Status VariadicInputBase<T, CudaT>::ComputeMethod(OpKernelContext* context, Impl
           prepare.output_tensor->Shape().Size());
     } else {
       // for more than 2 inputs, we need to accumulate into output tensor, as the shape from input0 + input1 might be different from output shape
-      CUDA_RETURN_IF_ERROR(cudaMemset(output_tensor->MutableDataRaw(), 0, output_shape.Size() * sizeof(CudaT)));
+      CUDA_RETURN_IF_ERROR(cudaMemsetAsync(output_tensor->MutableDataRaw(), 0, output_shape.Size() * sizeof(CudaT), Stream()));
 
       ORT_RETURN_IF_ERROR(BinaryElementwiseBroadcastPrepare(output_tensor, lhs_tensor, output_tensor, &prepare));
       Impl_Add(
+          Stream(),
           prepare.output_rank_or_simple_broadcast,
           &prepare.lhs_padded_strides,
           reinterpret_cast<const CudaT*>(prepare.lhs_tensor->template Data<T>()),
@@ -424,6 +431,7 @@ Status VariadicInputBase<T, CudaT>::ComputeMethod(OpKernelContext* context, Impl
       for (int index = 1; index < input_count; index++) {
         ORT_RETURN_IF_ERROR(BinaryElementwiseBroadcastPrepare(output_tensor, context->Input<Tensor>(index), output_tensor, &prepare));
         Impl_Compute(
+            Stream(),
             prepare.output_rank_or_simple_broadcast,
             &prepare.lhs_padded_strides,
             reinterpret_cast<const CudaT*>(prepare.lhs_tensor->template Data<T>()),
@@ -470,6 +478,7 @@ Status CompareFunction<T, CudaT>::CompareMethod(OpKernelContext* context, ImplCo
   size_t output_size = prepare.output_tensor->Shape().Size();
   IAllocatorUniquePtr<T> output_buffer = GetScratchBuffer<T>(output_size);
   Impl_Compare(
+      Stream(),
       prepare.output_rank_or_simple_broadcast,
       &prepare.lhs_padded_strides,
       reinterpret_cast<const CudaT*>(prepare.lhs_tensor->template Data<T>()),
@@ -482,6 +491,7 @@ Status CompareFunction<T, CudaT>::CompareMethod(OpKernelContext* context, ImplCo
       prepare.output_tensor->Shape().Size());
 
   Impl_Cast<CudaT, ToCudaType<bool>::MappedType>(
+      Stream(),
       reinterpret_cast<CudaT*>(output_buffer.get()),
       reinterpret_cast<ToCudaType<bool>::MappedType*>(prepare.output_tensor->template MutableData<bool>()),
       output_size);

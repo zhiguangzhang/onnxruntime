@@ -64,6 +64,7 @@ Status GatherElements::ComputeInternal(OpKernelContext* context) const {
   if (indices_tensor->IsDataType<int32_t>()) {
     const int32_t* indices_data = indices_tensor->template Data<int32_t>();
     GatherElementsImpl<int32_t>(
+        Stream(),
         input_rank,
         input_tensor->DataRaw(),
         input_dims[axis],
@@ -78,6 +79,7 @@ Status GatherElements::ComputeInternal(OpKernelContext* context) const {
   } else if (indices_tensor->IsDataType<int64_t>()) {
     const int64_t* indices_data = indices_tensor->template Data<int64_t>();
     GatherElementsImpl<int64_t>(
+        Stream(),
         input_rank,
         input_tensor->DataRaw(),
         input_dims[axis],

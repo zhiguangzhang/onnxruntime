@@ -74,7 +74,7 @@ Status Dropout<T1, T2>::ComputeInternal(OpKernelContext* context) const {
   ORT_ENFORCE(ratio_data >= 0.0f && ratio_data < 1.0f);
 
   PhiloxGenerator& generator = generator_ != nullptr ? *generator_.get() : PhiloxGenerator::Default();
-  DropoutKernelImpl(GetDeviceProp(), N, ratio_data, generator, X_data, Y_data, mask_data);
+  DropoutKernelImpl(GetDeviceProp(), Stream(), N, ratio_data, generator, X_data, Y_data, mask_data);
 
   return Status::OK();
 }
@@ -118,7 +118,7 @@ Status DropoutGrad<T1, T2>::ComputeInternal(OpKernelContext* context) const {
   ORT_ENFORCE(ratio_data >= 0.0f && ratio_data < 1.0f);
 
   const bool* mask_data = mask->template Data<bool>();
-  DropoutGradientKernelImpl(N, dY_data, mask_data, ratio_data, dX_data);
+  DropoutGradientKernelImpl(Stream(), N, dY_data, mask_data, ratio_data, dX_data);
 
   return Status::OK();
 }

@@ -449,6 +449,7 @@ bool QkvToContext(
 }
 
 bool LaunchAttentionKernel(
+    cudaStream_t stream,
     const void* input,
     const int* mask_index,
     void* output,
@@ -460,9 +461,6 @@ bool LaunchAttentionKernel(
     cublasHandle_t& cublas,
     const size_t element_size,
     bool is_unidirectional) {
-  // use default stream
-  const cudaStream_t stream = nullptr;
-
   if (element_size == 2) {
     return QkvToContext(cublas, stream,
                         batch_size, sequence_length, num_heads, head_size, element_size,

@@ -26,10 +26,10 @@ __global__ void ReduceRowSumOnMatrixAKernel(const int8_t* matrix, int32_t* row_s
   }
 }
 
-Status ReduceRowSumOnMatrixA(const int8_t* matrix, int32_t* row_sum, const int8_t offset, const MatMulComputeHelper& helper) {
+Status ReduceRowSumOnMatrixA(cudaStream_t stream, const int8_t* matrix, int32_t* row_sum, const int8_t offset, const MatMulComputeHelper& helper) {
   for (size_t batch = 0; batch < helper.OutputOffsets().size(); batch++) {
     ReduceRowSumOnMatrixAKernel<static_cast<int>(GridDim::maxThreadsPerBlock)>
-        <<<static_cast<int>(helper.M()), GridDim::maxThreadsPerBlock, 0>>>(matrix + helper.LeftOffsets()[batch],
+        <<<static_cast<int>(helper.M()), GridDim::maxThreadsPerBlock, 0, stream>>>(matrix + helper.LeftOffsets()[batch],
                                                                            row_sum + batch * helper.M(),
                                                                            offset,
                                                                            static_cast<int>(helper.K()));
@@ -55,10 +55,10 @@ __global__ void ReduceColSumOnMatrixBKernel(const int8_t* matrix, int32_t* col_s
   }
 }
 
-Status ReduceColSumOnMatrixB(const int8_t* matrix, int32_t* col_sum, const int8_t offset, const MatMulComputeHelper& helper) {
+Status ReduceColSumOnMatrixB(cudaStream_t stream, const int8_t* matrix, int32_t* col_sum, const int8_t offset, const MatMulComputeHelper& helper) {
   for (size_t batch = 0; batch < helper.OutputOffsets().size(); batch++) {
     ReduceColSumOnMatrixBKernel<static_cast<int>(GridDim::maxThreadsPerBlock)>
-        <<<static_cast<int>(helper.N()), GridDim::maxThreadsPerBlock, 0>>>(matrix + helper.RightOffsets()[batch],
+        <<<static_cast<int>(helper.N()), GridDim::maxThreadsPerBlock, 0, stream>>>(matrix + helper.RightOffsets()[batch],
                                                                            col_sum + batch * helper.N(),
                                                                            offset,
                                                                            static_cast<int32_t>(helper.K()),
@@ -94,7 +94,8 @@ __global__ void ComputeOffsetOfMatrixB(const int32_t* row_sum,
   }
 }
 
-Status OffsetOutput(const int32_t* row_sum,
+Status OffsetOutput(cudaStream_t stream,
+                    const int32_t* row_sum,
                     const int32_t* col_sum,
                     int32_t* output,
                     const int8_t a_offset,
@@ -102,7 +103,7 @@ Status OffsetOutput(const int32_t* row_sum,
                     const MatMulComputeHelper& helper) {
   if (a_offset && b_offset) {
     for (size_t batch = 0; batch < helper.OutputOffsets().size(); batch++) {
-      ComputeOffsetOfMatrixAB<<<static_cast<int>(helper.M()), GridDim::maxThreadsPerBlock, 0>>>(
+      ComputeOffsetOfMatrixAB<<<static_cast<int>(helper.M()), GridDim::maxThreadsPerBlock, 0, stream>>>(
           row_sum + batch * helper.M(),
           col_sum + batch * helper.N(),
           output + helper.OutputOffsets()[batch],
@@ -111,14 +112,14 @@ Status OffsetOutput(const int32_t* row_sum,
     }
   } else if (a_offset) {
     for (size_t batch = 0; batch < helper.OutputOffsets().size(); batch++) {
-      ComputeOffsetOfMatrixA<<<static_cast<int>(helper.M()), GridDim::maxThreadsPerBlock, 0>>>(
+      ComputeOffsetOfMatrixA<<<static_cast<int>(helper.M()), GridDim::maxThreadsPerBlock, 0, stream>>>(
           col_sum + batch * helper.N(),
           output + helper.OutputOffsets()[batch],
           static_cast<int32_t>(helper.N()));
     }
   } else if (b_offset) {
     for (size_t batch = 0; batch < helper.OutputOffsets().size(); batch++) {
-      ComputeOffsetOfMatrixB<<<static_cast<int>(helper.M()), GridDim::maxThreadsPerBlock, 0>>>(
+      ComputeOffsetOfMatrixB<<<static_cast<int>(helper.M()), GridDim::maxThreadsPerBlock, 0, stream>>>(
           row_sum + batch * helper.M(),
           output + helper.OutputOffsets()[batch],
           static_cast<int32_t>(helper.N()));
@@ -134,8 +135,8 @@ __global__ void PadMatrixInLeadingDimensionKernel(const int8_t* src, int8_t* dst
   }
 }
 
-Status PadMatrixInLeadingDimension(const int8_t* src, int8_t* dst, int64_t row, int64_t col, int64_t pad_size) {
-  PadMatrixInLeadingDimensionKernel<<<static_cast<int>(row), GridDim::maxThreadsPerBlock, 0>>>(
+Status PadMatrixInLeadingDimension(cudaStream_t stream, const int8_t* src, int8_t* dst, int64_t row, int64_t col, int64_t pad_size) {
+  PadMatrixInLeadingDimensionKernel<<<static_cast<int>(row), GridDim::maxThreadsPerBlock, 0, stream>>>(
       src,
       dst,
       static_cast<int>(col),

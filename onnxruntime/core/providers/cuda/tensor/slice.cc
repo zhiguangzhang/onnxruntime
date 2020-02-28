@@ -162,7 +162,8 @@ Status Slice<dynamic>::CallSliceImp(size_t element_size, size_t dimension_count,
     return Status::OK();
   }
 
-  return SliceImpl(element_size,
+  return SliceImpl(Stream(),
+                   element_size,
                    gsl::narrow_cast<int32_t>(dimension_count),
                    starts_buffer,
                    steps_buffer,

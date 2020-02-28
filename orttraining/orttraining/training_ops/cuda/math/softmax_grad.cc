@@ -39,7 +39,7 @@ Status SoftmaxGrad<T>::ComputeInternal(OpKernelContext* ctx) const {
   auto dX_data = reinterpret_cast<CudaT*>(ctx->Output(0, input_shape)->template MutableData<T>());
 
   if (D == input_shape[normalized_axis] && D <= 1024 && D * sizeof(T) <= 4096) {
-    dispatch_softmax_backward<CudaT, CudaT, AccType<T>, false>(dX_data, dY_data, Y_data, gsl::narrow_cast<int>(D), gsl::narrow_cast<int>(D), gsl::narrow_cast<int>(N));
+    dispatch_softmax_backward<CudaT, CudaT, AccType<T>, false>(Stream(), dX_data, dY_data, Y_data, gsl::narrow_cast<int>(D), gsl::narrow_cast<int>(D), gsl::narrow_cast<int>(N));
     return Status::OK();
   }
 

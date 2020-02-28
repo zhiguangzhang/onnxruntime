@@ -102,20 +102,20 @@ Status AdamOptimizer<T1, T2, T3, T4, T_GRAD, T_GRAD_NORM>::ComputeInternal(OpKer
   if (do_update_tensor != nullptr) {
     const bool do_update = *(do_update_tensor->template Data<bool>());
     if (!do_update) {
-      ORT_RETURN_IF_ERROR(CopyIfNotSameBuffer<T4>(M1, NM1));
-      ORT_RETURN_IF_ERROR(CopyIfNotSameBuffer<T4>(M2, NM2));
+      ORT_RETURN_IF_ERROR(CopyIfNotSameBuffer<T4>(Stream(), M1, NM1));
+      ORT_RETURN_IF_ERROR(CopyIfNotSameBuffer<T4>(Stream(), M2, NM2));
 
       if (S_in != S_out) {
         *(S_out) = *(S_in);
       }
       if (NW != nullptr) {
-        ORT_RETURN_IF_ERROR(CopyIfNotSameBuffer<T3>(W, *NW));
+        ORT_RETURN_IF_ERROR(CopyIfNotSameBuffer<T3>(Stream(), W, *NW));
       }
       if (NG != nullptr) {
-        ORT_RETURN_IF_ERROR(CopyIfNotSameBuffer<T_GRAD>(G, *NG));
+        ORT_RETURN_IF_ERROR(CopyIfNotSameBuffer<T_GRAD>(Stream(), G, *NG));
       }
       if (W_FP16 != nullptr && NW_FP16 != nullptr) {
-        ORT_RETURN_IF_ERROR(CopyIfNotSameBuffer<MLFloat16>(*W_FP16, *NW_FP16));
+        ORT_RETURN_IF_ERROR(CopyIfNotSameBuffer<MLFloat16>(Stream(), *W_FP16, *NW_FP16));
       }
 
       return Status::OK();
@@ -123,6 +123,7 @@ Status AdamOptimizer<T1, T2, T3, T4, T_GRAD, T_GRAD_NORM>::ComputeInternal(OpKer
   }
 
   AdamOptimizerImpl(
+      Stream(),
       reinterpret_cast<const CudaT1*>(ETA.template Data<T1>()),
       *S_in,
       reinterpret_cast<const CudaT3*>(W.template Data<T3>()),

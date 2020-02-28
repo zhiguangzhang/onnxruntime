@@ -39,6 +39,7 @@ Status UnaryElementwise::Prepare(OpKernelContext* context, UnaryElementwisePrepa
     UnaryElementwisePreparation p;                                                                         \
     UnaryElementwise::Prepare(context, &p);                                                                \
     Impl_##x(                                                                                              \
+        Stream(),                                                                                          \
         reinterpret_cast<const typename ToCudaType<T>::MappedType*>(p.input_tensor->template Data<T>()),   \
         reinterpret_cast<typename ToCudaType<T>::MappedType*>(p.output_tensor->template MutableData<T>()), \
         p.output_tensor->Shape().Size());                                                                  \

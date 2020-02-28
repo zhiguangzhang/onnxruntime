@@ -40,6 +40,7 @@ ONNX_OPERATOR_KERNEL_EX(
     if (utils::IsPrimitiveDataType<int32_t>(Tin_type)) {                        \
       if (p.output_tensor->Shape().Size() > 0) {                                \
         GatherImpl(                                                             \
+            Stream(),                                                           \
             input_block_size,                                                   \
             indices_max,                                                        \
             divmod_output_block_size,                                           \
@@ -54,6 +55,7 @@ ONNX_OPERATOR_KERNEL_EX(
     if (utils::IsPrimitiveDataType<int64_t>(Tin_type)) {                        \
       if (p.output_tensor->Shape().Size() > 0) {                                \
         GatherImpl(                                                             \
+            Stream(),                                                           \
             input_block_size,                                                   \
             indices_max,                                                        \
             divmod_output_block_size,                                           \

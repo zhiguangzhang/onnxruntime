@@ -71,6 +71,7 @@ __global__ void DropoutKernel(
 template <typename T>
 void DropoutKernelImpl(
     const cudaDeviceProp& prop,
+    cudaStream_t stream,
     const int64_t N,
     const float ratio,
     PhiloxGenerator& generator,
@@ -79,7 +80,7 @@ void DropoutKernelImpl(
     bool* mask_data) {
   if (ratio == 0.0f) {
     if (Y_data != X_data) {
-      CUDA_CALL_THROW(cudaMemcpyAsync(Y_data, X_data, N * sizeof(T), cudaMemcpyDeviceToDevice));
+      CUDA_CALL_THROW(cudaMemcpyAsync(Y_data, X_data, N * sizeof(T), cudaMemcpyDeviceToDevice, stream));
     }
     thrust::fill_n(thrust::device_pointer_cast(mask_data), N, true);
   } else {
@@ -91,13 +92,14 @@ void DropoutKernelImpl(
     const uint64_t counter_offset = static_cast<uint64_t>(((N - 1) / (block_size * grid_size * UNROLL) + 1) * UNROLL);
     auto seeds = generator.NextPhiloxSeeds(counter_offset);
 
-    DropoutKernel<T><<<grid_size, block_size, 0>>>(N, ratio, seeds, X_data, Y_data, mask_data);
+    DropoutKernel<T><<<grid_size, block_size, 0, stream>>>(N, ratio, seeds, X_data, Y_data, mask_data);
   }
 }
 
 #define SPECIALIZED_DROPOUT_IMPL(T) \
   template void DropoutKernelImpl(  \
       const cudaDeviceProp& prop,   \
+      cudaStream_t stream,    \
       const int64_t N,              \
       const float ratio,            \
       PhiloxGenerator& generator,   \
@@ -122,6 +124,7 @@ __global__ void DropoutGradientKernel(
 
 template <typename T>
 void DropoutGradientKernelImpl(
+    cudaStream_t stream,
     const int64_t N,
     const T* dY_data,
     const bool* mask_data,
@@ -129,17 +132,18 @@ void DropoutGradientKernelImpl(
     T* dX_data) {
   if (ratio == 0.0f) {
     if (dY_data != dX_data) {
-      CUDA_CALL_THROW(cudaMemcpyAsync(dX_data, dY_data, N * sizeof(T), cudaMemcpyDeviceToDevice));
+      CUDA_CALL_THROW(cudaMemcpyAsync(dX_data, dY_data, N * sizeof(T), cudaMemcpyDeviceToDevice, stream));
     }
   } else {
     const float scale = 1.f / (1.f - ratio);
     const int blocksPerGrid = (N + GridDim::maxThreadsPerBlock - 1) / GridDim::maxThreadsPerBlock;
-    DropoutGradientKernel<T><<<blocksPerGrid, GridDim::maxThreadsPerBlock, 0>>>(N, dY_data, mask_data, T(scale), dX_data);
+    DropoutGradientKernel<T><<<blocksPerGrid, GridDim::maxThreadsPerBlock, 0, stream>>>(N, dY_data, mask_data, T(scale), dX_data);
   }
 }
 
 #define SPECIALIZED_DROPOUT_GRAD_IMPL(T)   \
   template void DropoutGradientKernelImpl( \
+      cudaStream_t stream,           \
       const int64_t N,                     \
       const T* dY_data,                    \
       const bool* mask_data,               \

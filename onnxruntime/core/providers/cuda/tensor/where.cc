@@ -153,6 +153,7 @@ Status Where<T>::ComputeInternal(OpKernelContext* context) const {
   ORT_RETURN_IF_ERROR(prepare.TernaryElementwiseBroadcastPrepareHelper(condition_shape, X_shape, Y_shape, output_shape));
 
   WhereImpl<CudaT>(
+      Stream(),
       prepare.output_rank_or_simple_broadcast,
       prepare.a_padded_strides,
       reinterpret_cast<const bool*>(prepare.a_tensor->template Data<bool>()),

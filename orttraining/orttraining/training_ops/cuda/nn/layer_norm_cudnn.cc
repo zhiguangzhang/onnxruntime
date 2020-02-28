@@ -81,7 +81,7 @@ Status LayerNormCudnn<T>::ComputeInternal(OpKernelContext* p_op_kernel_context) 
   auto one_scale = GetScratchBuffer<CudaT>(N);
   Fill<CudaT>(one_scale.get(), one, N);
   auto zero_bias = GetScratchBuffer<CudaT>(N);
-  CUDA_RETURN_IF_ERROR(cudaMemset(zero_bias.get(), 0, N * sizeof(CudaT)));
+  CUDA_RETURN_IF_ERROR(cudaMemsetAsync(zero_bias.get(), 0, N * sizeof(CudaT), Stream()));
 
   // should care running_mean and running_variance?
   //auto running_mean = GetScratchBuffer<CudaT>(N);
@@ -106,7 +106,7 @@ Status LayerNormCudnn<T>::ComputeInternal(OpKernelContext* p_op_kernel_context) 
       mean_data,
       inv_std_var_data));
 
-  LayerNormLinearKernel<CudaT>(N, M, X_data, scale_data, bias_data, Y_data);
+  LayerNormLinearKernel<CudaT>(Stream(), N, M, X_data, scale_data, bias_data, Y_data);
 
   return Status::OK();
 }

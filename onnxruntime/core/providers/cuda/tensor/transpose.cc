@@ -44,14 +44,15 @@ static std::tuple<int, int> TryTransposeWithCublas(const std::vector<size_t>& pe
 }
 
 template <typename T>
-Status TransposeWithCublas(cublasHandle_t cublas_handle, const Tensor& input, Tensor& output, int M, int N) {
+Status TransposeWithCublas(cudaStream_t stream, cublasHandle_t cublas_handle, const Tensor& input, Tensor& output, int M, int N) {
   typedef typename ToCudaType<T>::MappedType CudaT;
   CudaT one = ToCudaType<T>::FromFloat(1.0f);
   CudaT zero = ToCudaType<T>::FromFloat(0.0f);
   const CudaT* input_data = reinterpret_cast<const CudaT*>(input.Data<T>());
   CudaT* output_data = reinterpret_cast<CudaT*>(output.MutableData<T>());
   CUBLAS_RETURN_IF_ERROR(
-      cublasTransposeHelper(cublas_handle,
+      cublasTransposeHelper(stream,
+                            cublas_handle,
                             CUBLAS_OP_T, CUBLAS_OP_T, M, N,
                             &one,
                             input_data,
@@ -79,11 +80,11 @@ Status Transpose::DoTranspose(const Transpose& kernel,
     int N = std::get<1>(mn);
     if (M != 0 && N != 0) {
       if (element_type == utils::GetONNXTensorElementDataType<float>()) {
-        return TransposeWithCublas<float>(kernel.CublasHandle(), input, output, M, N);
+        return TransposeWithCublas<float>(kernel.Stream(), kernel.CublasHandle(), input, output, M, N);
       } else if (element_type == utils::GetONNXTensorElementDataType<double>()) {
-        return TransposeWithCublas<double>(kernel.CublasHandle(), input, output, M, N);
+        return TransposeWithCublas<double>(kernel.Stream(), kernel.CublasHandle(), input, output, M, N);
       } else {
-        return TransposeWithCublas<MLFloat16>(kernel.CublasHandle(), input, output, M, N);
+        return TransposeWithCublas<MLFloat16>(kernel.Stream(), kernel.CublasHandle(), input, output, M, N);
       }
     }
   }
@@ -105,7 +106,7 @@ Status Transpose::DoTranspose(const Transpose& kernel,
   }
 
   size_t element_size = input.DataType()->Size();
-  auto status = TransposeImpl(element_size, rank, input_strides, input.DataRaw(),
+  auto status = TransposeImpl(kernel.Stream(), element_size, rank, input_strides, input.DataRaw(),
                               output_strides, output.MutableDataRaw(), output.Shape().Size());
 
   return status;

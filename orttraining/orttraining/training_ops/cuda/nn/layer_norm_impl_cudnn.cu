@@ -22,6 +22,7 @@ __global__ void _LayerNormLinearKernel(
 
 template <typename T>
 void LayerNormLinearKernel(
+    cudaStream_t stream,
     const int64_t N,
     const int64_t M,
     const T* X,
@@ -29,11 +30,12 @@ void LayerNormLinearKernel(
     const T* bias,
     T* Y) {
   int blocksPerGrid = (N * M + GridDim::maxThreadsPerBlock - 1) / GridDim::maxThreadsPerBlock;
-  _LayerNormLinearKernel<T><<<blocksPerGrid, GridDim::maxThreadsPerBlock, 0>>>(N, M, X, scale, bias, Y);
+  _LayerNormLinearKernel<T><<<blocksPerGrid, GridDim::maxThreadsPerBlock, 0, stream>>>(N, M, X, scale, bias, Y);
 }
 
 #define LAYERNORM_LINEAR_IMPL(T)         \
   template void LayerNormLinearKernel(  \
+    cudaStream_t stream,          \
     const int64_t N,              \
     const int64_t M,              \
     const T* X,                   \
@@ -68,6 +70,7 @@ __global__ void _LayerNormGradInternalKernel(
 
 template <typename T>
 void LayerNormGradInternalKernel(
+    cudaStream_t stream,
     const int64_t N,
     const int64_t M,
     const T* Y_grad,
@@ -79,11 +82,12 @@ void LayerNormGradInternalKernel(
     T* B,
     T* C) {
   int blocksPerGrid = (N * M + GridDim::maxThreadsPerBlock - 1) / GridDim::maxThreadsPerBlock;
-  _LayerNormGradInternalKernel<T><<<blocksPerGrid, GridDim::maxThreadsPerBlock, 0>>>(N, M, Y_grad, X_data, X_mean, X_inv_std_var, scale, A, B, C);
+  _LayerNormGradInternalKernel<T><<<blocksPerGrid, GridDim::maxThreadsPerBlock, 0, stream>>>(N, M, Y_grad, X_data, X_mean, X_inv_std_var, scale, A, B, C);
 }
 
 #define LAYERNORM_GRADInternal_IMPL(T)        \
   template void LayerNormGradInternalKernel(  \
+      cudaStream_t stream,              \
       const int64_t N,                        \
       const int64_t M,                        \
       const T* Y_grad,                        \
@@ -117,6 +121,7 @@ __global__ void _LayerNormGradXKernel(
 
 template <typename T>
 void LayerNormGradXKernel(
+    cudaStream_t stream,
     const int64_t N,
     const int64_t M,
     const T* X_data,
@@ -127,11 +132,12 @@ void LayerNormGradXKernel(
     const T* X_inv_std_var,
     T* X_grad) {
   int blocksPerGrid = (N * M + GridDim::maxThreadsPerBlock - 1) / GridDim::maxThreadsPerBlock;
-  _LayerNormGradXKernel<T><<<blocksPerGrid, GridDim::maxThreadsPerBlock, 0>>>(N, M, X_data, X_mean, B, mean_B, mean_C, X_inv_std_var, X_grad);
+  _LayerNormGradXKernel<T><<<blocksPerGrid, GridDim::maxThreadsPerBlock, 0, stream>>>(N, M, X_data, X_mean, B, mean_B, mean_C, X_inv_std_var, X_grad);
 }
 
 #define LAYERNORM_GRADX_IMPL(T)         \
   template void LayerNormGradXKernel(   \
+      cudaStream_t stream,        \
       const int64_t N,                  \
       const int64_t M,                  \
       const T* X_data,                  \

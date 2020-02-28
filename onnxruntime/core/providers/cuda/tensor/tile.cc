@@ -60,6 +60,7 @@ Status Tile<T>::ComputeInternal(OpKernelContext* ctx) const {
 
   if (output_tensor.Shape().Size() > 0) {
     TileImpl(
+        Stream(),
         rank,
         fdm_input_shape,
         input_strides,

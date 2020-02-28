@@ -11,16 +11,17 @@
 namespace onnxruntime {
 namespace cuda {
 
-Status ReduceRowSumOnMatrixA(const int8_t* matrix, int32_t* row_sum, const int8_t offset, const MatMulComputeHelper& helper);
-Status ReduceColSumOnMatrixB(const int8_t* matrix, int32_t* col_sum, const int8_t offset, const MatMulComputeHelper& helper);
-Status OffsetOutput(const int32_t* row_sum,
+Status ReduceRowSumOnMatrixA(cudaStream_t stream, const int8_t* matrix, int32_t* row_sum, const int8_t offset, const MatMulComputeHelper& helper);
+Status ReduceColSumOnMatrixB(cudaStream_t stream, const int8_t* matrix, int32_t* col_sum, const int8_t offset, const MatMulComputeHelper& helper);
+Status OffsetOutput(cudaStream_t stream,
+                    const int32_t* row_sum,
                     const int32_t* col_sum,
                     int32_t* output,
                     const int8_t a_offset,
                     const int8_t b_offset,
                     const MatMulComputeHelper& helper);
 
-Status PadMatrixInLeadingDimension(const int8_t* src, int8_t* dst, int64_t row, int64_t col, int64_t pad_size);
+Status PadMatrixInLeadingDimension(cudaStream_t stream, const int8_t* src, int8_t* dst, int64_t row, int64_t col, int64_t pad_size);
 
 }  // namespace cuda
 }  // namespace onnxruntime

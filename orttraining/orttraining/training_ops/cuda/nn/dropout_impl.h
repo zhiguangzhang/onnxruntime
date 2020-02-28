@@ -11,6 +11,7 @@ namespace cuda {
 template <typename T>
 void DropoutKernelImpl(
   const cudaDeviceProp& prop,
+  cudaStream_t stream,
   const int64_t N,
   const float ratio,
   PhiloxGenerator& generator,
@@ -20,6 +21,7 @@ void DropoutKernelImpl(
 
 template <typename T>
 void DropoutGradientKernelImpl(
+  cudaStream_t stream,
   const int64_t N,
   const T* dY_data,
   const bool* mask_data,

@@ -40,19 +40,19 @@ Status ReduceAllL2<TIn, TOut>::ComputeInternal(OpKernelContext* ctx) const {
   // Allocate output tensor.
   Tensor* output = ctx->Output(0, {});
   CudaTOut* p_output = reinterpret_cast<CudaTOut*>(output->template MutableData<TOut>());
-  ORT_ENFORCE(cudaMemset(p_output, 0, sizeof(CudaTOut)) == cudaSuccess);
+  ORT_ENFORCE(cudaMemsetAsync(p_output, 0, sizeof(CudaTOut), Stream()) == cudaSuccess);
 
   typedef MultiTensorReduceL2<CudaTIn, CudaTOut> TFunctor;
   TFunctor functor;
 
   // Check if all values are finite and write true to deviceOutput.
   // Otherwise, false will be written.
-  launch_multi_tensor_functor<1, TFunctor, CudaTOut*>(
+  launch_multi_tensor_functor<1, TFunctor, CudaTOut*>(Stream(),
       2048 * 32, tensor_sizes, grouped_tensor_pointers, functor, p_output);
 
   // *p_output is the squared sum of all elements.
   // Let's take a sqrt to get the actual L2-norm.
-  ScalarSqrt(p_output, p_output);
+  ScalarSqrt(Stream(), p_output, p_output);
 
   return Status::OK();
 }

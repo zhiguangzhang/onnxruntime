@@ -39,6 +39,7 @@ __global__ void _OneHotImpl(
 
 template <typename in_type, typename out_type>
 void OneHotImpl(
+    cudaStream_t stream,
     const in_type* indices_data,
     const fast_divmod fdm_depth_suffix,
     const fast_divmod fdm_suffix,
@@ -49,7 +50,7 @@ void OneHotImpl(
     size_t count) {
   int blocksPerGrid = (int)(ceil(static_cast<float>(count) / GridDim::maxThreadsPerBlock));
   CUDA_LONG N = static_cast<CUDA_LONG>(count);
-  _OneHotImpl<in_type, out_type><<<blocksPerGrid, GridDim::maxThreadsPerBlock, 0>>>(
+  _OneHotImpl<in_type, out_type><<<blocksPerGrid, GridDim::maxThreadsPerBlock, 0, stream>>>(
     indices_data,
     fdm_depth_suffix,
     fdm_suffix,
@@ -62,6 +63,7 @@ void OneHotImpl(
 
 #define SPECIALIZED_OneHotImpl(in_type, out_type) \
   template void OneHotImpl(                       \
+    cudaStream_t stream,                          \
     const in_type* indices_data,                  \
     const fast_divmod fdm_depth_suffix,           \
     const fast_divmod fdm_suffix,                 \

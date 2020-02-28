@@ -40,7 +40,8 @@ __global__ void _SliceKernel(const int32_t dimension_count,
     output_data[id] = input_data[input_index];
 }
 
-Status SliceImpl(const size_t element_size,
+Status SliceImpl(cudaStream_t stream,
+                 const size_t element_size,
                  const int32_t dimension_count,
                  const TArray<int64_t>& starts,
                  const TArray<int64_t>& steps,
@@ -49,11 +50,12 @@ Status SliceImpl(const size_t element_size,
                  const void* input_data,
                  void* output_data,
                  const size_t N) {
-  return SliceImplEx<false>(element_size, dimension_count, starts, steps, input_strides, output_strides, input_data,
+  return SliceImplEx<false>(stream, element_size, dimension_count, starts, steps, input_strides, output_strides, input_data,
                             output_data, N);
 }
 
-Status SliceImplGrad(const size_t element_size,
+Status SliceImplGrad(cudaStream_t stream,
+                     const size_t element_size,
                      const int32_t dimension_count,
                      const TArray<int64_t>& starts,
                      const TArray<int64_t>& steps,
@@ -62,12 +64,13 @@ Status SliceImplGrad(const size_t element_size,
                      const void* input_data,
                      void* output_data,
                      const size_t N) {
-  return SliceImplEx<true>(element_size, dimension_count, starts, steps, input_strides, output_strides, input_data,
+  return SliceImplEx<true>(stream, element_size, dimension_count, starts, steps, input_strides, output_strides, input_data,
                            output_data, N);
 }
 
 template <bool is_grad>
-Status SliceImplEx(const size_t element_size,
+Status SliceImplEx(cudaStream_t stream,
+                   const size_t element_size,
                    const int32_t dimension_count,
                    const TArray<int64_t>& starts,
                    const TArray<int64_t>& steps,
@@ -80,28 +83,28 @@ Status SliceImplEx(const size_t element_size,
 
   switch (element_size) {
     case sizeof(int8_t):
-      _SliceKernel<is_grad><<<blocksPerGrid, GridDim::maxThreadsPerBlock, 0>>>(
+      _SliceKernel<is_grad><<<blocksPerGrid, GridDim::maxThreadsPerBlock, 0, stream>>>(
           dimension_count, starts, steps, input_strides, output_strides,
           reinterpret_cast<const ToCudaType<int8_t>::MappedType*>(input_data),
           reinterpret_cast<ToCudaType<int8_t>::MappedType*>(output_data),
           (CUDA_LONG)N);
       break;
     case sizeof(int16_t):
-      _SliceKernel<is_grad><<<blocksPerGrid, GridDim::maxThreadsPerBlock, 0>>>(
+      _SliceKernel<is_grad><<<blocksPerGrid, GridDim::maxThreadsPerBlock, 0, stream>>>(
           dimension_count, starts, steps, input_strides, output_strides,
           reinterpret_cast<const ToCudaType<int16_t>::MappedType*>(input_data),
           reinterpret_cast<ToCudaType<int16_t>::MappedType*>(output_data),
           (CUDA_LONG)N);
       break;
     case sizeof(int32_t):
-      _SliceKernel<is_grad><<<blocksPerGrid, GridDim::maxThreadsPerBlock, 0>>>(
+      _SliceKernel<is_grad><<<blocksPerGrid, GridDim::maxThreadsPerBlock, 0, stream>>>(
           dimension_count, starts, steps, input_strides, output_strides,
           reinterpret_cast<const ToCudaType<int32_t>::MappedType*>(input_data),
           reinterpret_cast<ToCudaType<int32_t>::MappedType*>(output_data),
           (CUDA_LONG)N);
       break;
     case sizeof(int64_t):
-      _SliceKernel<is_grad><<<blocksPerGrid, GridDim::maxThreadsPerBlock, 0>>>(
+      _SliceKernel<is_grad><<<blocksPerGrid, GridDim::maxThreadsPerBlock, 0, stream>>>(
           dimension_count, starts, steps, input_strides, output_strides,
           reinterpret_cast<const ToCudaType<int64_t>::MappedType*>(input_data),
           reinterpret_cast<ToCudaType<int64_t>::MappedType*>(output_data),

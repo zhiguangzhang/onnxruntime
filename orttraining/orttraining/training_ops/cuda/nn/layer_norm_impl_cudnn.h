@@ -9,6 +9,7 @@ namespace cuda {
 
 template <typename T>
 void LayerNormLinearKernel(
+    cudaStream_t stream,
     const int64_t N,
     const int64_t M,
     const T* X,
@@ -18,6 +19,7 @@ void LayerNormLinearKernel(
 
 template <typename T>
 void LayerNormGradInternalKernel(
+    cudaStream_t stream,
     const int64_t N,
     const int64_t M,
     const T* Y_grad,
@@ -31,6 +33,7 @@ void LayerNormGradInternalKernel(
 
 template <typename T>
 void LayerNormGradXKernel(
+    cudaStream_t stream,
     const int64_t N,
     const int64_t M,
     const T* X_data,

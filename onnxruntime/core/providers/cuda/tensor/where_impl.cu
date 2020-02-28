@@ -69,6 +69,7 @@ __global__ void _TenaryElementWiseSimple(
 
 template <typename T>
 void WhereImpl(
+    cudaStream_t stream,
     size_t output_rank_or_simple_broadcast,
     const TArray<int64_t>& cond_padded_strides,
     const bool* cond_data,
@@ -83,7 +84,7 @@ void WhereImpl(
   CUDA_LONG N = static_cast<CUDA_LONG>(count);
 
   if (output_rank_or_simple_broadcast == static_cast<size_t>(SimpleBroadcast::NoBroadcast)) {
-    _TenaryElementWiseSimple<T><<<blocksPerGrid, GridDim::maxThreadsPerBlock, 0>>>(
+    _TenaryElementWiseSimple<T><<<blocksPerGrid, GridDim::maxThreadsPerBlock, 0, stream>>>(
         cond_data,
         x_data,
         y_data,
@@ -91,7 +92,7 @@ void WhereImpl(
         N);
   } else {
     if (cond_padded_strides.size_ && x_padded_strides.size_ && y_padded_strides.size_) {
-      _TenaryElementWise<T, true, true, true><<<blocksPerGrid, GridDim::maxThreadsPerBlock, 0>>>(
+      _TenaryElementWise<T, true, true, true><<<blocksPerGrid, GridDim::maxThreadsPerBlock, 0, stream>>>(
           output_rank_or_simple_broadcast,
           cond_padded_strides,
           cond_data,
@@ -103,7 +104,7 @@ void WhereImpl(
           output_data,
           N);
     } else if (cond_padded_strides.size_ && x_padded_strides.size_ && !y_padded_strides.size_) {
-      _TenaryElementWise<T, true, true, false><<<blocksPerGrid, GridDim::maxThreadsPerBlock, 0>>>(
+      _TenaryElementWise<T, true, true, false><<<blocksPerGrid, GridDim::maxThreadsPerBlock, 0, stream>>>(
           output_rank_or_simple_broadcast,
           cond_padded_strides,
           cond_data,
@@ -115,7 +116,7 @@ void WhereImpl(
           output_data,
           N);
     } else if (cond_padded_strides.size_ && !x_padded_strides.size_ && y_padded_strides.size_) {
-      _TenaryElementWise<T, true, false, true><<<blocksPerGrid, GridDim::maxThreadsPerBlock, 0>>>(
+      _TenaryElementWise<T, true, false, true><<<blocksPerGrid, GridDim::maxThreadsPerBlock, 0, stream>>>(
           output_rank_or_simple_broadcast,
           cond_padded_strides,
           cond_data,
@@ -127,7 +128,7 @@ void WhereImpl(
           output_data,
           N);
     } else if (!cond_padded_strides.size_ && x_padded_strides.size_ && y_padded_strides.size_) {
-      _TenaryElementWise<T, false, true, true><<<blocksPerGrid, GridDim::maxThreadsPerBlock, 0>>>(
+      _TenaryElementWise<T, false, true, true><<<blocksPerGrid, GridDim::maxThreadsPerBlock, 0, stream>>>(
           output_rank_or_simple_broadcast,
           cond_padded_strides,
           cond_data,
@@ -139,7 +140,7 @@ void WhereImpl(
           output_data,
           N);
     } else if (cond_padded_strides.size_ && !x_padded_strides.size_ && !y_padded_strides.size_) {
-      _TenaryElementWise<T, true, false, false><<<blocksPerGrid, GridDim::maxThreadsPerBlock, 0>>>(
+      _TenaryElementWise<T, true, false, false><<<blocksPerGrid, GridDim::maxThreadsPerBlock, 0, stream>>>(
           output_rank_or_simple_broadcast,
           cond_padded_strides,
           cond_data,
@@ -151,7 +152,7 @@ void WhereImpl(
           output_data,
           N);
       } else if (!cond_padded_strides.size_ && x_padded_strides.size_ && !y_padded_strides.size_) {
-        _TenaryElementWise<T, false, true, false><<<blocksPerGrid, GridDim::maxThreadsPerBlock, 0>>>(
+        _TenaryElementWise<T, false, true, false><<<blocksPerGrid, GridDim::maxThreadsPerBlock, 0, stream>>>(
             output_rank_or_simple_broadcast,
             cond_padded_strides,
             cond_data,
@@ -163,7 +164,7 @@ void WhereImpl(
             output_data,
             N);
       } else if (!cond_padded_strides.size_ && !x_padded_strides.size_ && y_padded_strides.size_) {
-        _TenaryElementWise<T, false, false, true><<<blocksPerGrid, GridDim::maxThreadsPerBlock, 0>>>(
+        _TenaryElementWise<T, false, false, true><<<blocksPerGrid, GridDim::maxThreadsPerBlock, 0, stream>>>(
             output_rank_or_simple_broadcast,
             cond_padded_strides,
             cond_data,
@@ -175,7 +176,7 @@ void WhereImpl(
             output_data,
             N);
       } else {
-        _TenaryElementWise<T, false, false, false><<<blocksPerGrid, GridDim::maxThreadsPerBlock, 0>>>(
+        _TenaryElementWise<T, false, false, false><<<blocksPerGrid, GridDim::maxThreadsPerBlock, 0, stream>>>(
             output_rank_or_simple_broadcast,
             cond_padded_strides,
             cond_data,
@@ -191,8 +192,9 @@ void WhereImpl(
 }
 
 #define SPECIALIZED_IMPL(T)                                          \
-  template void WhereImpl<T>(size_t output_rank_or_simple_broadcast, \
-                             const TArray<int64_t>& cond_padded_strides,     \
+  template void WhereImpl<T>(cudaStream_t stream,                           \
+                             size_t output_rank_or_simple_broadcast,        \
+                             const TArray<int64_t>& cond_padded_strides,    \
                              const bool* cond_data,                  \
                              const TArray<int64_t>& x_padded_strides,        \
                              const T* x_data,                        \
