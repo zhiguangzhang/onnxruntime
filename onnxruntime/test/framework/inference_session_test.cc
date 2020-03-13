@@ -9,6 +9,7 @@
 #include <iterator>
 #include <thread>
 #include <fstream>
+#include <chrono>
 
 #include <google/protobuf/io/zero_copy_stream_impl.h>
 #include "core/common/logging/logging.h"
@@ -33,6 +34,7 @@
 #include "dummy_provider.h"
 #include "test_utils.h"
 #include "test/capturing_sink.h"
+#include "test/common/cuda_op_test_utils.h"
 #include "test/test_environment.h"
 #include "test/providers/provider_test_utils.h"
 #include "test/optimizer/dummy_graph_transformer.h"
@@ -747,6 +749,63 @@ TEST(InferenceSessionTests, TestRegisterExecutionProvider) {
   RunOptions run_options;
   run_options.run_tag = "InferenceSessionTests.TestWithIstream";
   RunModel(session_object, run_options);
+}
+
+TEST(InferenceSessionTests, CFNet) {
+  if (HasCudaEnvironment(0)) {
+    SessionOptions so;
+
+    //so.session_logid = "InferenceSessionTests." + log_str;
+    //so.session_log_verbosity_level = 1;  // change to 1 for detailed logging
+
+    InferenceSession session_object{so};
+    CUDAExecutionProviderInfo epi;
+    epi.device_id = 0;
+    EXPECT_TRUE(session_object.RegisterExecutionProvider(onnxruntime::make_unique<CUDAExecutionProvider>(epi)).IsOK());
+
+    std::string model_uri = "D:/Models/CFNet/test_cfnet/model_opt_complexmul.onnx";
+    std::ifstream model_file_stream(model_uri, ios::in | ios::binary);
+    ASSERT_TRUE(model_file_stream.good());
+    ASSERT_TRUE(session_object.Load(model_file_stream).IsOK());
+    ASSERT_TRUE(session_object.Initialize().IsOK());
+
+    RunOptions run_options;
+
+    //run the model with iobinding
+    unique_ptr<IOBinding> io_binding;
+    Status st = session_object.NewIOBinding(&io_binding);
+    ASSERT_TRUE(st.IsOK());
+    auto input_allocator = io_binding->GetCPUAllocator(0, kCudaExecutionProvider);
+
+    std::vector<float> x_vals(46875, 1.0f), model_zf_vals(5040000, 2.0f), model_alphaf_vals(15750, 3.0f), cos_window_vals(15625, 4.0f);
+    std::vector<int64_t> x_dims{1, 3, 125, 125}, model_zf_dims{10, 32, 125, 63, 2}, model_alphaf_dims{1, 1, 125, 63, 2}, cos_window_dims{125, 125};
+    OrtValue x, model_zf, model_alphaf, cos_window;
+    CreateMLValue<float>(input_allocator, x_dims, x_vals, &x);
+    CreateMLValue<float>(input_allocator, model_zf_dims, model_zf_vals, &model_zf);
+    CreateMLValue<float>(input_allocator, model_alphaf_dims, model_alphaf_vals, &model_alphaf);
+    CreateMLValue<float>(input_allocator, cos_window_dims, cos_window_vals, &cos_window);
+    io_binding->BindInput("x", x);
+    io_binding->BindInput("model_zf", model_zf);
+    io_binding->BindInput("model_alphaf", model_alphaf);
+    io_binding->BindInput("cos_window", cos_window);
+
+    std::vector<int64_t> expected_output_dims = {10, 1, 125, 125};
+    OrtValue output_ml_value;
+    AllocateMLValue<float>(input_allocator, expected_output_dims, &output_ml_value);
+
+    io_binding->BindOutput("output", output_ml_value);
+    ASSERT_TRUE(io_binding->SynchronizeInputs().IsOK());
+
+    // Now run
+    auto start = std::chrono::high_resolution_clock::now();
+    for (int i = 0; i < 1000; ++i) {
+      st = session_object.Run(run_options, *io_binding.get());
+    }
+    auto end = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<double> duration = end - start;
+
+    std::cout << "Execution time: " << duration.count() << "ms." << std::endl;
+  }
 }
 
 static void TestBindHelper(const std::string& log_str,
