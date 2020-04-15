@@ -55,7 +55,8 @@ struct LesserValueCmp {
 // Selects the top k elements (largest or smallest based on template parameter)
 template <class Comparator>
 static vector<pair<typename Comparator::DataType, int64_t>> select_top_k(
-    const ConstEigenMatrixMapRowMajor<typename Comparator::DataType>& raw_data, int64_t row_num, int64_t num_blocks,
+    const ConstEigenMatrixMapRowMajor<typename Comparator::DataType>& raw_data,
+    int64_t row_num, int64_t num_blocks,
     int64_t block_slice, int64_t inter_block_offset, const unsigned k,
     bool sort_top_k) {
   // create a data holder and insert elements
@@ -77,12 +78,25 @@ static vector<pair<typename Comparator::DataType, int64_t>> select_top_k(
   return data_holder;
 }
 
+template <class _Ty, class _Pr = less<typename std::vector<_Ty>::value_type>>
+class reusable_priority_queue : public std::priority_queue<_Ty, std::vector<_Ty>, _Pr> {
+ public:
+  reusable_priority_queue() = default;
+
+  const std::vector<_Ty>& unsorted_results() const { return c; }
+
+  void reset(size_t size) {
+    c.clear();
+    c.reserve(size);
+  }
+};
+
 // Given an input tensor 'input' and metadata values - 'k' and 'axis_parsed',
 // this method will extract the sorted top k largest/smallest elements and place them in the output tensor 'values'
 // along with the metadata output 'indices'
-template <bool largest, bool sorted, class Comparator>
+template <class Comparator>
 static void extract_top_k_elements(const Tensor* input, const TensorShape& input_shape, Tensor* values,
-                                   Tensor* indices, const TensorShape& output_shape, const unsigned k,
+                                   Tensor* indices, const TensorShape& output_shape, const unsigned k, bool sorted,
                                    const unsigned axis_parsed) {
   // Cache some values that will be used in the implementation below
   const int64_t rows = input_shape.SizeToDimension(static_cast<size_t>(axis_parsed));
@@ -101,65 +115,50 @@ static void extract_top_k_elements(const Tensor* input, const TensorShape& input
   const int64_t block_slice = reduced_cols / k;
   const int64_t num_blocks = input_shape[axis_parsed];
 
+  reusable_priority_queue<pair<typename Comparator::DataType, int64_t>, Comparator> heap;
+  Comparator comparer;
+
   for (int64_t i = 0; i < rows; ++i) {
     for (int64_t j = 0; j < block_slice; ++j) {
-      // Since sorted == true, we will use a Heap to hold the top K values in sorted fashion
-      if (sorted) {  // The optimizer will clean-up the redundant condition based on the template parameter 'sorted'
-        auto n_casted = static_cast<double>(num_blocks);
-        auto k_casted = static_cast<double>(k);
-        if ((n_casted + k_casted * log(k_casted)) < (n_casted * log(k_casted))) {
-          // Select first  - O(n), then sort O(k * ln(k))
-          // Overall complexity =  O (n + k * ln(k))
-          const auto& data_holder = select_top_k<Comparator>(input_map, i, num_blocks, block_slice, j, k, true);
-          for (int64_t l = 0; l < k; ++l) {
-            const auto& elem = data_holder[l];
-            auto col_index = l * block_slice + j;
-            values_map(i, col_index) = elem.first;
-            indices_map(i, col_index) = elem.second;
+      bool use_priority_queue = k < num_blocks;  // TODO: Fix
+
+      if (use_priority_queue) {
+        heap.reset(k);
+
+        int64_t l = 0;
+        // add first k items
+        for (; l < k && l < num_blocks; ++l) {
+          heap.push({input_map(i, l * block_slice + j), l});
+        }
+
+        for (; l < num_blocks; ++l) {
+          std::pair<typename Comparator::DataType, int64_t> item(input_map(i, l * block_slice + j), l);
+          if (comparer(item, heap.top())) {
+            heap.pop();
+            heap.push(item);
           }
-        } else {
-          // Perform sorted selection by passing 'n' elements over a heap of size 'k'
-          // overall complexity =  O (n * ln(k))
+        }
 
-          // Build a min-heap/max-heap, the heap element is pair of (value, idx)
-          // The top of the heap is the smallest/largest value depending on whether it is a min-heap/max-heap
-          // This is a min-heap if largest == true, this is a max-heap if largest == false
-          priority_queue<pair<typename Comparator::DataType, int64_t>, vector<pair<typename Comparator::DataType, int64_t>>, Comparator> heap;
-
-          // Maintain the size of heap to be less or equal to k, so the
-          // heap will hold the k largest/smallest values
-          for (int64_t l = 0; l < num_blocks; ++l) {
-            const auto value = input_map(i, l * block_slice + j);
-            // largest == true: insert into the min-heap if the size is < k or if the new
-            // element is greater than the min element in the min-heap
-
-            // largest == false: insert into the min-heap if the size is < k or if the new
-            // element is lesser than the max element in the max-heap
-            if ((heap.size() < k) || (largest && value > heap.top().first) ||
-                (!largest && value < heap.top().first)) {  // the optimizer will clean-up the redundant condition based
-                                                           // on the template parameter 'largest'
-              heap.push({value, l});
-            }
-            if (heap.size() > k) {
-              heap.pop();
-            }
-          }
+        if (sorted) {
           // Extract these k elements and place them in the results placeholder
-          for (int64_t l = 0; l < k; ++l) {
+          for (l = 0; l < k; ++l) {
             const auto& elem = heap.top();
             auto col_index = (k - l - 1) * block_slice + j;
             values_map(i, col_index) = elem.first;
             indices_map(i, col_index) = elem.second;
             heap.pop();
           }
+        } else {
+          const auto& results = heap.unsorted_results();
+          for (l = 0; l < k; ++l) {
+            const auto& elem = results[l];
+            auto col_index = l * block_slice + j;
+            values_map(i, col_index) = elem.first;
+            indices_map(i, col_index) = elem.second;
+          }
         }
-      } else {  // sorted == false
-        // The optimizer will clean-up the redundant condition based on the template parameter 'sorted'
-
-        // If the top K values are not required to be sorted, we use a more optimal selection algorithm
-        // Average - O(n). Worst - O(n * ln(n)) or O(n^2) depending on the implementation, where 'n' is the number of input
-
-        const auto& data_holder = select_top_k<Comparator>(input_map, i, num_blocks, block_slice, j, k, false);
+      } else {
+        const auto& data_holder = select_top_k<Comparator>(input_map, i, num_blocks, block_slice, j, k, sorted);
 
         // Insert the top 'k' (largest or smallest) elements into the final output buffers
         for (int64_t l = 0; l < k; ++l) {
@@ -204,22 +203,14 @@ static Status TopKImpl(OpKernelContext* p_op_kernel_context, const Tensor* input
     return Status::OK();
   }
 
-  if (sorted && largest) {
+  if (largest) {
     // extract sorted largest TopK elements
-    extract_top_k_elements<true, true, GreaterValueCmp<T>>(input, input_shape, values, indices, output_shape, k,
-                                                           gsl::narrow_cast<unsigned>(axis_parsed));
-  } else if (sorted && !largest) {
-    // extract sorted smallest TopK elements
-    extract_top_k_elements<false, true, LesserValueCmp<T>>(input, input_shape, values, indices, output_shape, k,
-                                                           gsl::narrow_cast<unsigned>(axis_parsed));
-  } else if (largest) {
-    // extract unsorted (order undefined) largest TopK elements
-    extract_top_k_elements<true, false, GreaterValueCmp<T>>(input, input_shape, values, indices, output_shape, k,
-                                                            gsl::narrow_cast<unsigned>(axis_parsed));
+    extract_top_k_elements<GreaterValueCmp<T>>(input, input_shape, values, indices, output_shape, k, sorted,
+                                               gsl::narrow_cast<unsigned>(axis_parsed));
   } else {
-    // extract unsorted (order undefined) smallest TopK elements
-    extract_top_k_elements<false, false, LesserValueCmp<T>>(input, input_shape, values, indices, output_shape, k,
-                                                            gsl::narrow_cast<unsigned>(axis_parsed));
+    // extract sorted smallest TopK elements
+    extract_top_k_elements<LesserValueCmp<T>>(input, input_shape, values, indices, output_shape, k, sorted,
+                                              gsl::narrow_cast<unsigned>(axis_parsed));
   }
 
   return Status::OK();
