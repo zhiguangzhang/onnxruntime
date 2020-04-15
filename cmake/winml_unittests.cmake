@@ -25,6 +25,13 @@ function(set_winml_target_properties target)
   target_include_directories(${target} PRIVATE ${WINML_TEST_INC_DIR})
 endfunction()
 
+set(winml_test_targets "")
+set(generate_winml_test_artifact ON CACHE BOOL "" FORCE)
+if (generate_winml_test_artifact)
+  set(WINML_TEST_ARTIFACT_DIR ${CMAKE_CURRENT_BINARY_DIR}/winml_test_artifact)
+  file(MAKE_DIRECTORY ${WINML_TEST_ARTIFACT_DIR}/${CMAKE_BUILD_TYPE})
+endif()
+
 function(add_winml_test)
   # Add a test target and make it discoverable by CTest by calling add_test
   cmake_parse_arguments(_UT "DYN" "TARGET" "LIBS;SOURCES;DEPENDS" ${ARGN})
@@ -51,6 +58,15 @@ function(add_winml_test)
     COMMAND ${_UT_TARGET}
     WORKING_DIRECTORY $<TARGET_FILE_DIR:${_UT_TARGET}>
   )
+  list(APPEND winml_test_targets ${_UT_TARGET})
+  set (winml_test_targets  ${winml_test_targets} PARENT_SCOPE)
+
+  if (generate_winml_test_artifact)
+    set_target_properties( ${_UT_TARGET}
+      PROPERTIES
+      RUNTIME_OUTPUT_DIRECTORY ${WINML_TEST_ARTIFACT_DIR}
+    )
+  endif()
 endfunction()
 
 function(get_winml_test_scenario_src
@@ -164,7 +180,7 @@ target_include_directories(winml_test_concurrency PRIVATE ${ONNXRUNTIME_ROOT}/co
 # can't be used here because we don't know the destination during configure time (in multi-configuration generators,
 # such as VS, one can switch between Debug/Release builds in the same build tree, and the destination depends on the
 # build mode).
-function(add_winml_collateral source)
+function(add_winml_collateral source destination)
   get_filename_component(source_directory ${source} DIRECTORY)
   file(GLOB_RECURSE collaterals RELATIVE ${source_directory} ${source})
   foreach(collateral ${collaterals})
@@ -172,22 +188,39 @@ function(add_winml_collateral source)
     if(NOT IS_DIRECTORY ${collateral_path})
         add_custom_command(TARGET winml_test_common
           POST_BUILD
-          COMMAND ${CMAKE_COMMAND} -E copy_if_different ${collateral_path} "$<TARGET_FILE_DIR:winml_test_common>/${collateral}")
+          COMMAND ${CMAKE_COMMAND} -E copy_if_different ${collateral_path} ${destination})
     endif()
   endforeach()
 endfunction()
 
-add_winml_collateral("${WINML_TEST_SRC_DIR}/api/models/*.onnx")
-add_winml_collateral("${WINML_TEST_SRC_DIR}/collateral/images/*.jpg")
-add_winml_collateral("${WINML_TEST_SRC_DIR}/collateral/images/*.png")
-add_winml_collateral("${WINML_TEST_SRC_DIR}/collateral/models/*.onnx")
-add_winml_collateral("${WINML_TEST_SRC_DIR}/common/testdata/squeezenet/*")
-add_winml_collateral("${WINML_TEST_SRC_DIR}/image/images/*.jpg")
-add_winml_collateral("${WINML_TEST_SRC_DIR}/image/images/*.png")
-add_winml_collateral("${WINML_TEST_SRC_DIR}/image/groundTruth/*.jpg")
-add_winml_collateral("${WINML_TEST_SRC_DIR}/image/groundTruth/*.png")
-add_winml_collateral("${WINML_TEST_SRC_DIR}/image/models/*.onnx")
-add_winml_collateral("${WINML_TEST_SRC_DIR}/scenario/cppwinrt/*.onnx")
-add_winml_collateral("${WINML_TEST_SRC_DIR}/scenario/models/*.onnx")
-add_winml_collateral("${REPO_ROOT}/onnxruntime/test/testdata/sequence_length.onnx")
-add_winml_collateral("${REPO_ROOT}/onnxruntime/test/testdata/sequence_construct.onnx")
+
+set(winml_collateral_paths 
+    "${WINML_TEST_SRC_DIR}/api/models/*.onnx"
+    "${WINML_TEST_SRC_DIR}/collateral/images/*.jpg"
+    "${WINML_TEST_SRC_DIR}/collateral/images/*.png"
+    "${WINML_TEST_SRC_DIR}/collateral/models/*.onnx"
+    "${WINML_TEST_SRC_DIR}/common/testdata/squeezenet/*"
+    "${WINML_TEST_SRC_DIR}/image/images/*.jpg"
+    "${WINML_TEST_SRC_DIR}/image/images/*.png"
+    "${WINML_TEST_SRC_DIR}/image/groundTruth/*.jpg"
+    "${WINML_TEST_SRC_DIR}/image/groundTruth/*.png"
+    "${WINML_TEST_SRC_DIR}/image/models/*.onnx"
+    "${WINML_TEST_SRC_DIR}/scenario/cppwinrt/*.onnx"
+    "${WINML_TEST_SRC_DIR}/scenario/models/*.onnx"
+    "${REPO_ROOT}/onnxruntime/test/testdata/sequence_length.onnx"
+    "${REPO_ROOT}/onnxruntime/test/testdata/sequence_construct.onnx"
+)
+
+foreach(collateral_path ${winml_collateral_paths})
+  if (generate_winml_test_artifact)
+    add_winml_collateral(${collateral_path} "${WINML_TEST_ARTIFACT_DIR}/${CMAKE_BUILD_TYPE}/${collateral}")
+  else()
+    add_winml_collateral(${collateral_path} "$<TARGET_FILE_DIR:winml_test_common>/${collateral}")
+  endif()
+endforeach()
+
+if (generate_winml_test_artifact)
+  add_custom_target(winml_copy_test_artifact
+                    COMMAND ${CMAKE_COMMAND} -E copy_directory ${WINML_TEST_ARTIFACT_DIR}/${CMAKE_BUILD_TYPE} $<TARGET_FILE_DIR:winml_test_common>)
+  add_dependencies(winml_copy_test_artifact ${winml_test_targets})
+endif()
