@@ -20,6 +20,7 @@
 #include "core/common/exceptions.h"
 #include "core/framework/op_kernel.h"
 #include "core/framework/tensor.h"
+#include "core/platform/threadpool.h"
 #include "core/util/math_cpuonly.h"
 #include <queue>
 #include <algorithm>
@@ -97,7 +98,7 @@ class reusable_priority_queue : public std::priority_queue<_Ty, std::vector<_Ty>
 template <class Comparator>
 static void extract_top_k_elements(const Tensor* input, const TensorShape& input_shape, Tensor* values,
                                    Tensor* indices, const TensorShape& output_shape, const unsigned k, bool sorted,
-                                   const unsigned axis_parsed) {
+                                   const unsigned axis_parsed, concurrency::ThreadPool* threadpool) {
   // Cache some values that will be used in the implementation below
   const int64_t rows = input_shape.SizeToDimension(static_cast<size_t>(axis_parsed));
   const int64_t cols = input->Shape().Size() / rows;
@@ -115,60 +116,96 @@ static void extract_top_k_elements(const Tensor* input, const TensorShape& input
   const int64_t block_slice = reduced_cols / k;
   const int64_t num_blocks = input_shape[axis_parsed];
 
-  reusable_priority_queue<pair<typename Comparator::DataType, int64_t>, Comparator> heap;
-  Comparator comparer;
+  int64_t tp_threads = threadpool != nullptr ? threadpool->NumThreads() : 1;
+  int64_t num_threads = std::min(tp_threads, rows);
 
-  for (int64_t i = 0; i < rows; ++i) {
-    for (int64_t j = 0; j < block_slice; ++j) {
-      bool use_priority_queue = k < num_blocks;  // TODO: Fix
+  // rough attempt to make sure there's enough work for each thread
+  auto total_work = rows * block_slice * num_blocks;
+  while (num_threads > 1 && (total_work / num_threads) < 1024) {
+    --num_threads;
+  }
 
-      if (use_priority_queue) {
-        heap.reset(k);
+  std::function<void(std::ptrdiff_t batch)> find_top_k;
 
-        int64_t l = 0;
-        // add first k items
-        for (; l < k && l < num_blocks; ++l) {
-          heap.push({input_map(i, l * block_slice + j), l});
-        }
+  bool use_priority_queue = k < num_blocks;  // TODO: Fix
+  if (use_priority_queue) {
+    find_top_k =
+        [num_threads, rows, block_slice, num_blocks, k, sorted,
+         &input_map, &values_map, &indices_map](std::ptrdiff_t batch) {
+          int64_t start_row = static_cast<int64_t>(batch * rows / num_threads);
+          int64_t end_row = static_cast<int64_t>((batch + 1) * rows / num_threads);
 
-        for (; l < num_blocks; ++l) {
-          std::pair<typename Comparator::DataType, int64_t> item(input_map(i, l * block_slice + j), l);
-          if (comparer(item, heap.top())) {
-            heap.pop();
-            heap.push(item);
+          reusable_priority_queue<pair<typename Comparator::DataType, int64_t>, Comparator> heap;
+          Comparator comparer;
+
+          for (int64_t i = start_row; i < end_row; ++i) {
+            for (int64_t j = 0; j < block_slice; ++j) {
+              heap.reset(k);
+
+              int64_t l = 0;
+              // add first k items
+              for (; l < k && l < num_blocks; ++l) {
+                heap.push({input_map(i, l * block_slice + j), l});
+              }
+
+              for (; l < num_blocks; ++l) {
+                std::pair<typename Comparator::DataType, int64_t> item(input_map(i, l * block_slice + j), l);
+                if (comparer(item, heap.top())) {
+                  heap.pop();
+                  heap.push(item);
+                }
+              }
+
+              if (sorted) {
+                // Extract these k elements and place them in the results placeholder
+                for (l = 0; l < k; ++l) {
+                  const auto& elem = heap.top();
+                  auto col_index = (k - l - 1) * block_slice + j;
+                  values_map(i, col_index) = elem.first;
+                  indices_map(i, col_index) = elem.second;
+                  heap.pop();
+                }
+              } else {
+                const auto& results = heap.unsorted_results();
+                for (l = 0; l < k; ++l) {
+                  const auto& elem = results[l];
+                  auto col_index = l * block_slice + j;
+                  values_map(i, col_index) = elem.first;
+                  indices_map(i, col_index) = elem.second;
+                }
+              }
+            }
           }
-        }
+        };
+  } else {
+    find_top_k =
+        [num_threads, rows, block_slice, num_blocks, k, sorted,
+         &input_map, &values_map, &indices_map](std::ptrdiff_t batch) {
+          int64_t start_row = static_cast<int64_t>(batch * rows / num_threads);
+          int64_t end_row = static_cast<int64_t>((batch + 1) * rows / num_threads);
 
-        if (sorted) {
-          // Extract these k elements and place them in the results placeholder
-          for (l = 0; l < k; ++l) {
-            const auto& elem = heap.top();
-            auto col_index = (k - l - 1) * block_slice + j;
-            values_map(i, col_index) = elem.first;
-            indices_map(i, col_index) = elem.second;
-            heap.pop();
-          }
-        } else {
-          const auto& results = heap.unsorted_results();
-          for (l = 0; l < k; ++l) {
-            const auto& elem = results[l];
-            auto col_index = l * block_slice + j;
-            values_map(i, col_index) = elem.first;
-            indices_map(i, col_index) = elem.second;
-          }
-        }
-      } else {
-        const auto& data_holder = select_top_k<Comparator>(input_map, i, num_blocks, block_slice, j, k, sorted);
+          for (int64_t i = start_row; i < end_row; ++i) {
+            for (int64_t j = 0; j < block_slice; ++j) {
+              const auto& data_holder = select_top_k<Comparator>(input_map, i, num_blocks, block_slice, j, k, sorted);
 
-        // Insert the top 'k' (largest or smallest) elements into the final output buffers
-        for (int64_t l = 0; l < k; ++l) {
-          const auto& elem = data_holder[l];
-          auto col_index = l * block_slice + j;
-          values_map(i, col_index) = elem.first;
-          indices_map(i, col_index) = elem.second;
-        }
-      }
-    }
+              // Insert the top 'k' (largest or smallest) elements into the final output buffers
+              for (int64_t l = 0; l < k; ++l) {
+                const auto& elem = data_holder[l];
+                auto col_index = l * block_slice + j;
+                values_map(i, col_index) = elem.first;
+                indices_map(i, col_index) = elem.second;
+              }
+            }
+          }
+        };
+  }
+
+  if (num_threads == 1) {
+    find_top_k(0);
+  } else {
+    // we want to re-use the priority_queue in each lambda as much as possible, so the lambda does multiple rows.
+    // the alternative would be to use TryBatchParallelFor with the lambda doing one row.
+    threadpool->SimpleParallelFor(num_threads, find_top_k);
   }
 }
 
@@ -203,14 +240,14 @@ static Status TopKImpl(OpKernelContext* p_op_kernel_context, const Tensor* input
     return Status::OK();
   }
 
+  auto* threadpool = p_op_kernel_context->GetOperatorThreadPool();
+
   if (largest) {
-    // extract sorted largest TopK elements
     extract_top_k_elements<GreaterValueCmp<T>>(input, input_shape, values, indices, output_shape, k, sorted,
-                                               gsl::narrow_cast<unsigned>(axis_parsed));
+                                               gsl::narrow_cast<unsigned>(axis_parsed), threadpool);
   } else {
-    // extract sorted smallest TopK elements
     extract_top_k_elements<LesserValueCmp<T>>(input, input_shape, values, indices, output_shape, k, sorted,
-                                              gsl::narrow_cast<unsigned>(axis_parsed));
+                                              gsl::narrow_cast<unsigned>(axis_parsed), threadpool);
   }
 
   return Status::OK();
