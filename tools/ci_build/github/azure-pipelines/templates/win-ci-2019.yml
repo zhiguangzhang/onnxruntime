@@ -94,7 +94,7 @@ jobs:
         displayName: 'Publish Pipeline Artifact: ${{ parameters.WinMLTestArtifact }}'
         inputs:
           artifactName: ${{ parameters.WinMLTestArtifact }}
-          targetPath: '$(Build.BinariesDirectory)\RelWithDebInfo\$(parameters.WinMLTestArtifact)'
+          targetPath: '$(Build.BinariesDirectory)\RelWithDebInfo\${{ parameters.WinMLTestArtifact }}'
 
 
 
