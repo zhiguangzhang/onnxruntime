@@ -89,7 +89,7 @@ jobs:
         workingFolder: '$(Build.BinariesDirectory)\RelWithDebInfo'
         createLogFile: true
 
-    - ${{ if ne(parameters[WinMLTestArtifact], '') }}:
+    - ${{ if ne(parameters['WinMLTestArtifact'], '') }}:
       - task: PublishPipelineArtifact@0
         displayName: 'Publish Pipeline Artifact: ${{ parameters.WinMLTestArtifact }}'
         inputs:
