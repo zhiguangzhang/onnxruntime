@@ -42,6 +42,7 @@ jobs:
     DoEsrp: ${{ parameters.DoEsrp }}
     CudaVersion: '10.0'
     OrtPackageId: 'Microsoft.ML.OnnxRuntime.DirectML'
+    WinMLTestArtifact: 'winml_test_artifact'
     NuPackScript: |
      msbuild $(Build.SourcesDirectory)\csharp\OnnxRuntime.CSharp.proj /p:Configuration=RelWithDebInfo /t:CreatePackage /p:OrtPackageId=Microsoft.ML.OnnxRuntime.DirectML
      copy $(Build.SourcesDirectory)\csharp\src\Microsoft.ML.OnnxRuntime\bin\RelWithDebInfo\*.nupkg $(Build.ArtifactStagingDirectory)

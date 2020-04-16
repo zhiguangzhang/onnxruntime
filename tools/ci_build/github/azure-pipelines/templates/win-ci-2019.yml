@@ -16,6 +16,7 @@ parameters:
   AgentDemands: []
   OrtPackageId: Microsoft.ML.OnnxRuntime
   RunTests : 'true'
+  WinMLTestArtifact: ''
 jobs:
 - job: ${{ parameters.JobName }}
   timeoutInMinutes: 120
@@ -87,6 +88,15 @@ jobs:
         logProjectEvents: true
         workingFolder: '$(Build.BinariesDirectory)\RelWithDebInfo'
         createLogFile: true
+
+    - ${{ if ne(parameters[WinMLTestArtifact], '') }}:
+      - task: PublishPipelineArtifact@0
+        displayName: 'Publish Pipeline Artifact: ${{ parameters.WinMLTestArtifact }}'
+        inputs:
+          artifactName: ${{ parameters.WinMLTestArtifact }}
+          targetPath: '$(Build.BinariesDirectory)\RelWithDebInfo\$(parameters.WinMLTestArtifact)'
+
+
 
     # Build RelWithDebInfo -- this variable required to build C#
     - script: |
