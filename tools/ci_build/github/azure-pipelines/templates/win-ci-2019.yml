@@ -72,7 +72,7 @@ jobs:
        Get-ChildItem -Path dist/*.whl | foreach {pip install --upgrade $_.fullname}   
       workingDirectory: '$(Build.SourcesDirectory)\cmake\external\onnx'
       env:
-        BuildArch: $(BuildArch)
+        BuildArch: ${{ parameters.BuildArch }}
       displayName: 'Install ONNX'
     
     - task: PythonScript@0
