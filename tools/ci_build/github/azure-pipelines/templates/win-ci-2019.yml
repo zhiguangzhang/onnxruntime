@@ -16,7 +16,7 @@ parameters:
   AgentDemands: []
   OrtPackageId: Microsoft.ML.OnnxRuntime
   RunTests : 'true'
-  WinMLTestArtifact: ''
+  DownlevelTestArtifact: 'false'
 jobs:
 - job: ${{ parameters.JobName }}
   timeoutInMinutes: 120
@@ -89,12 +89,12 @@ jobs:
         workingFolder: '$(Build.BinariesDirectory)\RelWithDebInfo'
         createLogFile: true
 
-    - ${{ if ne(parameters['WinMLTestArtifact'], '') }}:
+    - ${{ if eq(parameters.DownlevelTestArtifact, true) }}:
       - task: PublishPipelineArtifact@0
-        displayName: 'Publish Pipeline Artifact: ${{ parameters.WinMLTestArtifact }}'
+        displayName: 'Publish Pipeline Artifact: downlevel-test-artifact'
         inputs:
-          artifactName: ${{ parameters.WinMLTestArtifact }}
-          targetPath: '$(Build.BinariesDirectory)\RelWithDebInfo\${{ parameters.WinMLTestArtifact }}'
+          artifactName: downlevel-test-artifact
+          targetPath: '$(Build.BinariesDirectory)\RelWithDebInfo\RelWithDebInfo'
 
 
 
