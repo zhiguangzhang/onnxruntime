@@ -35,6 +35,7 @@ jobs:
       filename: '$(Build.SourcesDirectory)\tools\ci_build\github\windows\setup_env_cuda.bat'
       modifyEnvironment: true
       workingFolder: '$(Build.BinariesDirectory)'
+      arguments: 'v10.1'
 
   - template: set-test-data-variables-step.yml  
   - template: win-download-test-data.yml

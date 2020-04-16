@@ -16,6 +16,7 @@ jobs:
     EnvSetupScript: setup_env_trt.bat
     buildArch: x64
     setVcvars: true
+    CUDA_VERSION: '10.2'
   timeoutInMinutes: 120
   workspace:
     clean: all
@@ -32,6 +33,7 @@ jobs:
       filename: '$(Build.SourcesDirectory)\tools\ci_build\github\windows\$(EnvSetupScript)'
       modifyEnvironment: true
       workingFolder: '$(Build.BinariesDirectory)'
+      arguments: v${{ variables.CUDA_VERSION }}
 
   - script: |
      python -m pip install -q pyopenssl setuptools wheel numpy     

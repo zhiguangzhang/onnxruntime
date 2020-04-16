@@ -57,6 +57,7 @@ jobs:
         filename: '$(Build.SourcesDirectory)\tools\ci_build\github\windows\${{ parameters.EnvSetupScript }}'
         modifyEnvironment: true
         workingFolder: '$(Build.BinariesDirectory)'
+        arguments: v${{ variables.CUDA_VERSION }}
 
     - script: |
        python -m pip install -q pyopenssl setuptools wheel numpy scipy
