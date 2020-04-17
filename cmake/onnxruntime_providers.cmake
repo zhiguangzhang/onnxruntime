@@ -451,7 +451,7 @@ if (onnxruntime_USE_DML)
       add_dependencies(${target} RESTORE_PACKAGES)
       target_link_libraries(${target} PRIVATE "${DML_PACKAGE_DIR}/bin/${onnxruntime_target_platform}/DirectML.lib")
     endif()
-    target_link_options(${target} PUBLIC /DELAYLOAD:dxgi.dll /DELAYLOAD:d3d11.dll /DELAYLOAD:d3d12.dll)
+    target_link_options(${target} PUBLIC /DELAYLOAD:directml.dll /DELAYLOAD:dxgi.dll /DELAYLOAD:d3d11.dll /DELAYLOAD:d3d12.dll)
   endfunction()
 
   target_add_dml(onnxruntime_providers_dml)
