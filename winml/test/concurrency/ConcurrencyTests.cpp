@@ -253,11 +253,11 @@ void MultiThreadMultiSessionOnDevice(const LearningModelDevice& device) {
 }
 
 void MultiThreadMultiSession() {
-    MultiThreadMultiSessionOnDevice(LearningModelDeviceKind::Cpu);
+    MultiThreadMultiSessionOnDevice(LearningModelDevice(LearningModelDeviceKind::Cpu));
 }
 
 void MultiThreadMultiSessionGpu() {
-    MultiThreadMultiSessionOnDevice(LearningModelDeviceKind::DirectX);
+    MultiThreadMultiSessionOnDevice(LearningModelDevice(LearningModelDeviceKind::DirectX));
 }
 
 // Create different sessions for each thread, and evaluate
@@ -322,11 +322,11 @@ void MultiThreadSingleSessionOnDevice(const LearningModelDevice& device) {
 }
 
 void MultiThreadSingleSession() {
-    MultiThreadSingleSessionOnDevice(LearningModelDeviceKind::Cpu);
+    MultiThreadSingleSessionOnDevice(LearningModelDevice(LearningModelDeviceKind::Cpu));
 }
 
 void MultiThreadSingleSessionGpu() {
-    MultiThreadSingleSessionOnDevice(LearningModelDeviceKind::DirectX);
+    MultiThreadSingleSessionOnDevice(LearningModelDevice(LearningModelDeviceKind::DirectX));
 }
 }
 
