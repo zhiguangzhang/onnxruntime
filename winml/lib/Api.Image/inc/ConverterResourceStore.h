@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <mutex>
 #include <winrt/windows.media.h>
 #include "VideoFrameToTensorConverter.h"
 #include "TensorToVideoFrameConverter.h"
