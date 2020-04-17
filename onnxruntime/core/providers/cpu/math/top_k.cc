@@ -55,28 +55,30 @@ struct LesserValueCmp {
 
 // Selects the top k elements (largest or smallest based on template parameter)
 template <class Comparator>
-static vector<pair<typename Comparator::DataType, int64_t>> select_top_k(
+static void select_top_k(
     const ConstEigenMatrixMapRowMajor<typename Comparator::DataType>& raw_data,
     int64_t row_num, int64_t num_blocks,
     int64_t block_slice, int64_t inter_block_offset, const unsigned k,
-    bool sort_top_k) {
-  // create a data holder and insert elements
-  vector<pair<typename Comparator::DataType, int64_t>> data_holder;
+    bool sort_top_k,
+    vector<pair<typename Comparator::DataType, int64_t>>& data_holder) {
+  data_holder.clear();
   data_holder.reserve(num_blocks);
+
   for (int64_t l = 0; l < num_blocks; ++l) {
     data_holder.push_back({raw_data(row_num, l * block_slice + inter_block_offset), l});
   }
 
-  // find the top k (largest or smallest) elements in the data holder - O(n)
-  nth_element(data_holder.begin(), data_holder.begin() + (k - 1), data_holder.end(), Comparator());
+  // find the top k (largest or smallest) elements in the data holder - O(n) average. O(n*n) worst case.
+  // See https://en.wikipedia.org/wiki/Quickselect
+  Comparator comparator;
+  nth_element(data_holder.begin(), data_holder.begin() + (k - 1), data_holder.end(), comparator);
 
   // sort the top k elements if needed - O (k log k)
   if (sort_top_k) {
-    std::sort(data_holder.begin(), data_holder.begin() + k, Comparator());
+    std::sort(data_holder.begin(), data_holder.begin() + k, comparator);
   }
 
   // the data_holder now contains the top k elements in the first k indices
-  return data_holder;
 }
 
 template <class _Ty, class _Pr = less<typename std::vector<_Ty>::value_type>>
@@ -121,13 +123,18 @@ static void extract_top_k_elements(const Tensor* input, const TensorShape& input
 
   // rough attempt to make sure there's enough work for each thread
   auto total_work = rows * block_slice * num_blocks;
-  while (num_threads > 1 && (total_work / num_threads) < 1024) {
+  while (num_threads > 1 && (total_work / num_threads) < 4 * 1024) {
     --num_threads;
   }
 
   std::function<void(std::ptrdiff_t batch)> find_top_k;
 
-  bool use_priority_queue = k < num_blocks;  // TODO: Fix
+  // from testing various batch sizes relative to k, the following works well as a selector.
+  // tested with following combinations
+  //   batch_size = [ 8, 16, 32, 64, 128, 256, 512, 1024, 2048 ]
+  //            k = [ 1, 2, 4, 6, 8, 16, 24, 32, 48, 64, 128 ]
+  bool use_priority_queue = k < 4 || (std::log2(k) / std::log2(num_blocks)) <= 0.70;
+
   if (use_priority_queue) {
     find_top_k =
         [num_threads, rows, block_slice, num_blocks, k, sorted,
@@ -184,9 +191,12 @@ static void extract_top_k_elements(const Tensor* input, const TensorShape& input
           int64_t start_row = static_cast<int64_t>(batch * rows / num_threads);
           int64_t end_row = static_cast<int64_t>((batch + 1) * rows / num_threads);
 
+          // we re-use a single data_holder for performance. avoids allocating memory on each iteration
+          vector<pair<typename Comparator::DataType, int64_t>> data_holder;
+
           for (int64_t i = start_row; i < end_row; ++i) {
             for (int64_t j = 0; j < block_slice; ++j) {
-              const auto& data_holder = select_top_k<Comparator>(input_map, i, num_blocks, block_slice, j, k, sorted);
+              select_top_k<Comparator>(input_map, i, num_blocks, block_slice, j, k, sorted, data_holder);
 
               // Insert the top 'k' (largest or smallest) elements into the final output buffers
               for (int64_t l = 0; l < k; ++l) {
