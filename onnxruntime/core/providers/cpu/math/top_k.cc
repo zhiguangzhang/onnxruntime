@@ -86,11 +86,13 @@ class reusable_priority_queue : public std::priority_queue<_Ty, std::vector<_Ty>
  public:
   reusable_priority_queue() = default;
 
-  const std::vector<_Ty>& unsorted_results() const { return c; }
+  const std::vector<_Ty>& unsorted_results() const {
+    return std::priority_queue<_Ty, std::vector<_Ty>, _Pr>::c;
+  }
 
   void reset(size_t size) {
-    c.clear();
-    c.reserve(size);
+    std::priority_queue<_Ty, std::vector<_Ty>, _Pr>::c.clear();
+    std::priority_queue<_Ty, std::vector<_Ty>, _Pr>::c.reserve(size);
   }
 };
 
