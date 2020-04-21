@@ -181,7 +181,7 @@ static void FindTopKElements(const Tensor* input, const TensorShape& input_shape
   // too many threads degrades performance.
   // TODO: May want a different calculation for each branch below instead.
   int64_t threads_needed = static_cast<int64_t>(std::floor(input_shape.Size() * k / (128 * 1024)));
-  num_threads = std::max(std::min(threads_needed, num_threads), 1LL);
+  num_threads = std::max(std::min(threads_needed, num_threads), static_cast<int64_t>(1));
 
   // from testing various batch sizes relative to k, the following appears to work well as a selector.
   // tested with following combinations
