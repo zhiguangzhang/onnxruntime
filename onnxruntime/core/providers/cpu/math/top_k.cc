@@ -78,7 +78,7 @@ Maintain a binary heap where HeapComp of the parent with either child is false.
 There is no ordering within a level.
 
 NOTE: The comparison is backwards compared to std::priority_queue as we use the same comparator for this as for
-      nth_element. As such for the a heap selecting the largest values the comparator is greater than. 
+      nth_element in SelectTopK. As such for a heap selecting the largest values the comparator is 'greater than'.
 */
 template <class HeapCmp>
 static void HeapifyIthPosition(int64_t* heap, size_t i, size_t k, const HeapCmp& heap_cmp) {
@@ -124,11 +124,8 @@ template <class Comparator>
 static void SelectTopK(const Comparator& comparer,
                        int64_t row_offset, int64_t num_blocks, int64_t block_slice, int64_t inter_block_offset,
                        const unsigned k, bool sort_top_k, vector<int64_t>& data_holder) {
-  data_holder.clear();
-  data_holder.reserve(num_blocks);
-
   for (int64_t l = 0; l < num_blocks; ++l) {
-    data_holder.push_back(row_offset + (l * block_slice + inter_block_offset));
+    data_holder[l] = (row_offset + (l * block_slice + inter_block_offset));
   }
 
   // find the top k (largest or smallest) elements in the data holder - O(n) average. O(n*n) worst case.
@@ -171,7 +168,7 @@ static void FindTopKElements(const Tensor* input, const TensorShape& input_shape
   // TODO: Is this permissible? If so the output shape must also allow for less than k entries and the
   // ONNX shape inferencing needs updating.
   // Both the priority queue and SelectTopK paths below would need updating to handle this scenario unless
-  // we set k to num_blocks and have garbage output for the missing slots
+  // we set k to num_blocks and have garbage output for the missing slots.
   ORT_ENFORCE(num_blocks >= k, "Less than k values in axis. k=", k, " axis=", axis_parsed, " values=", num_blocks);
 
   int64_t tp_threads = threadpool != nullptr ? threadpool->NumThreads() : 1;
@@ -234,7 +231,9 @@ static void FindTopKElements(const Tensor* input, const TensorShape& input_shape
 
           Comparator comparer(input_data);
 
-          std::vector<int64_t> indices_data(k, -1);
+          // the heap is stored in indices_data. each iteration overwrites the old data when it adds the
+          // initial k values, so we don't need to clear it.
+          std::vector<int64_t> indices_data(k);
           int64_t* indices = indices_data.data();  // raw pointer is slightly faster for HeapifyIthPosition
 
           for (int64_t i = start_row; i < end_row; ++i) {
@@ -303,12 +302,11 @@ static void FindTopKElements(const Tensor* input, const TensorShape& input_shape
           int64_t start_row = static_cast<int64_t>(batch * rows / num_threads);
           int64_t end_row = static_cast<int64_t>((batch + 1) * rows / num_threads);
 
-          // for SelectTopK it's faster to just store the index and lookup the value each time.
-          // we're using this path when we need to select a lot of values, so the
           Comparator comparer(input_data);
 
-          // we re-use a single data_holder for performance. avoids allocating memory on each iteration
-          std::vector<int64_t> data_holder;
+          // we re-use a single data_holder for performance. avoids allocating memory on each iteration.
+          // the call to SelectTopK overwrites any existing data so we don't need to clear on each iteration.
+          std::vector<int64_t> data_holder(num_blocks);
 
           for (int64_t i = start_row; i < end_row; ++i) {
             auto row_offset = i * cols;
@@ -329,10 +327,11 @@ static void FindTopKElements(const Tensor* input, const TensorShape& input_shape
         };
   }
 
-  if (num_threads == 1) {
+  if (num_threads <= 1) {
     find_top_k(0);
   } else {
-    // we want to re-use the priority_queue in each lambda as much as possible, so the lambda does multiple rows.
+    // we want to re-use the storage variables in each lambda as much as possible to minimize allocations
+    // on each iteration, so the lambda does multiple rows. e.g. the data_holder and indices_data vectors.
     // the alternative would be to use TryBatchParallelFor with the lambda doing one row.
     threadpool->SimpleParallelFor(num_threads, find_top_k);
   }
