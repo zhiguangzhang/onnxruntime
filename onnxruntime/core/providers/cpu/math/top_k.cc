@@ -15,6 +15,7 @@
  */
 
 #include "core/providers/cpu/math/top_k.h"
+#include "core/providers/cpu/math/top_heap.h"
 #include "core/providers/common.h"
 #include "core/common/common.h"
 #include "core/common/exceptions.h"
@@ -29,186 +30,515 @@
 using namespace std;
 namespace onnxruntime {
 
+#define USE_INDEX_ONLY
+//#define USE_STD_SWAP
+//#define X_IMPL
+
 template <typename T>
 struct GreaterValueCmp {
   using DataType = T;
-  bool operator()(const pair<T, int64_t>& lhs, const pair<T, int64_t>& rhs) {
+  GreaterValueCmp(const T* data = nullptr) : data_(data) {
+  }
+
+  bool operator()(const int64_t lhs_idx, const int64_t rhs_idx) const {
+    return (data_[lhs_idx] > data_[rhs_idx] ||
+            // when values are equal, we want lhs to get higher "priority"
+            // if its corresponding index comes first (i.e.) is lower
+            (data_[lhs_idx] == data_[rhs_idx] && lhs_idx < rhs_idx));
+  }
+
+  bool operator()(const T* data, const int64_t lhs_idx, const int64_t rhs_idx) const {
+    return (data[lhs_idx] > data[rhs_idx] ||
+            // when values are equal, we want lhs to get higher "priority"
+            // if its corresponding index comes first (i.e.) is lower
+            (data[lhs_idx] == data[rhs_idx] && lhs_idx < rhs_idx));
+  }
+
+  bool operator()(const pair<T, int64_t>& lhs, const pair<T, int64_t>& rhs) const {
     return (lhs.first > rhs.first ||
             // when values are equal, we want lhs to get higher "priority"
             // if its corresponding index comes first (i.e.) is lower
             (lhs.first == rhs.first && lhs.second < rhs.second));
   }
+
+  bool CompareValueOnly(const T& lhs, const T& rhs) const {
+    return lhs > rhs;
+  }
+
+ private:
+  const T* data_;
 };
 
 template <typename T>
 struct LesserValueCmp {
   using DataType = T;
-  bool operator()(const pair<T, int64_t>& lhs, const pair<T, int64_t>& rhs) {
+
+  LesserValueCmp(const T* data = nullptr) : data_(data) {
+  }
+
+  bool operator()(const int64_t lhs_idx, const int64_t rhs_idx) const {
+    return (data_[lhs_idx] < data_[rhs_idx] ||
+            // when values are equal, we want lhs to get higher "priority"
+            // if its corresponding index comes first (i.e.) is lower
+            (data_[lhs_idx] == data_[rhs_idx] && lhs_idx < rhs_idx));
+  }
+
+  bool operator()(const T* data, const int64_t lhs_idx, const int64_t rhs_idx) const {
+    return (data[lhs_idx] < data[rhs_idx] ||
+            // when values are equal, we want lhs to get higher "priority"
+            // if its corresponding index comes first (i.e.) is lower
+            (data[lhs_idx] == data[rhs_idx] && lhs_idx < rhs_idx));
+  }
+
+  bool operator()(const pair<T, int64_t>& lhs, const pair<T, int64_t>& rhs) const {
     return (lhs.first < rhs.first ||
             // when values are equal, we want lhs to get higher "priority"
             // if its corresponding index comes first (i.e.) is lower
             (lhs.first == rhs.first && lhs.second < rhs.second));
   }
+
+  bool CompareValueOnly(const T& lhs, const T& rhs) const {
+    return lhs < rhs;
+  }
+
+ private:
+  const T* data_;
 };
+
+/*
+Maintain a binary heap where HeapComp of the parent of two children returns false for both children
+e.g. if the comparison is 'greater than', the parent is smaller than both children.
+There is no ordering within a level.
+
+NOTE: The comparison is backwards compared to std::priority_queue as we use the same comparator for this as for
+      nth_element. As such for the a heap selecting the largest values the comparator is greater than. 
+
+Using std::vector for heap results in overhead from std::swap wanting to use iterators.
+*/
+template <class HeapCmp>
+static void HeapifyIthPosition(const typename HeapCmp::DataType* data, int64_t* heap,
+                               size_t i, size_t k, const HeapCmp& heap_cmp) {
+  ORT_UNUSED_PARAMETER(data);
+
+  while (true) {
+    size_t left = 2 * i + 1;
+    size_t right = left + 1;
+    if (right < k) {
+      // need to check both left and right children
+
+      // check if we should move child up. check left node as well as whether left is preferred over right.
+      // if i can replace left check whether right would replace left (if so, i replaces left as it's the weakest)
+      bool i_replaces_left = heap_cmp(/*data,*/ heap[i], heap[left]);
+      if (i_replaces_left && heap_cmp(/*data,*/ heap[right], heap[left])) {
+        // left is going to be pushed up as both i and right beat it
+#ifdef USE_STD_SWAP
+        std::swap(heap[i], heap[left]);
+#else
+        auto tmp = heap[i];
+        heap[i] = heap[left];
+        heap[left] = tmp;
+#endif
+        i = left;
+      } else if (i_replaces_left || heap_cmp(/*data,*/ heap[i], heap[right])) {
+        // i_replaces_left implies left replaces right due to 'if' so replace right with i as right is the worst.
+        // also check if i only beats right
+#ifdef USE_STD_SWAP
+        std::swap(heap[i], heap[right]);
+#else
+        auto tmp = heap[i];
+        heap[i] = heap[right];
+        heap[right] = tmp;
+#endif
+        i = right;
+      } else
+        break;
+    } else if ((left < k) && heap_cmp(/*data,*/ heap[i], heap[left])) {
+#ifdef USE_STD_SWAP
+      std::swap(heap[i], heap[left]);
+#else
+      auto tmp = heap[i];
+      heap[i] = heap[left];
+      heap[left] = tmp;
+#endif
+      i = left;
+    } else
+      break;
+  }
+}
+
+template <class HeapCmp>
+static void HeapifyIthPosition(std::pair<typename HeapCmp::DataType, int64_t>* heap,
+                               size_t i, size_t k, const HeapCmp& heap_cmp) {
+  while (true) {
+    size_t left = 2 * i + 1;
+    size_t right = left + 1;
+    if (right < k) {
+      // need to check both left and right children
+
+      // check if we should move child up. check left node as well as whether left is preferred over right.
+      // if i can replace left, check whether right would also replace left (if so, replace left as it's the weakest)
+      bool i_replaces_left = heap_cmp(heap[i], heap[left]);
+      if (i_replaces_left && heap_cmp(heap[right], heap[left])) {
+        // left is going to be pushed up as both i and right beat it
+#ifdef USE_STD_SWAP
+        std::swap(heap[i], heap[left]);
+#else
+        auto tmp = heap[i];
+        heap[i] = heap[left];
+        heap[left] = tmp;
+#endif
+        i = left;
+      } else if (i_replaces_left || heap_cmp(heap[i], heap[right])) {
+        // i_replaces_left implies left replaces right due to 'if' so replace right with i as right is the worst.
+        // also check if i only beats right
+#ifdef USE_STD_SWAP
+        std::swap(heap[i], heap[right]);
+#else
+        auto tmp = heap[i];
+        heap[i] = heap[right];
+        heap[right] = tmp;
+#endif
+        i = right;
+      } else
+        break;
+    } else if ((left < k) && heap_cmp(heap[i], heap[left])) {
+#ifdef USE_STD_SWAP
+      std::swap(heap[i], heap[left]);
+#else
+      auto tmp = heap[i];
+      heap[i] = heap[left];
+      heap[left] = tmp;
+#endif
+      i = left;
+    } else
+      break;
+  }
+}
 
 // Static helpers that implement the core logic for each of the 'TopK' operator flavor
 
+#ifdef USE_INDEX_ONLY
 // Selects the top k elements (largest or smallest based on template parameter)
 template <class Comparator>
-static void select_top_k(
-    const ConstEigenMatrixMapRowMajor<typename Comparator::DataType>& raw_data,
-    int64_t row_num, int64_t num_blocks,
-    int64_t block_slice, int64_t inter_block_offset, const unsigned k,
-    bool sort_top_k,
-    vector<pair<typename Comparator::DataType, int64_t>>& data_holder) {
+static void SelectTopK(const Comparator& comparer,
+                       const typename Comparator::DataType* input_data,
+                       int64_t row_offset, int64_t num_blocks, int64_t block_slice, int64_t inter_block_offset,
+                       const unsigned k, bool sort_top_k, vector<int64_t>& data_holder) {
+  ORT_UNUSED_PARAMETER(input_data);
+
   data_holder.clear();
   data_holder.reserve(num_blocks);
 
   for (int64_t l = 0; l < num_blocks; ++l) {
-    data_holder.push_back({raw_data(row_num, l * block_slice + inter_block_offset), l});
+    data_holder.push_back(row_offset + (l * block_slice + inter_block_offset));
   }
 
   // find the top k (largest or smallest) elements in the data holder - O(n) average. O(n*n) worst case.
   // See https://en.wikipedia.org/wiki/Quickselect
-  Comparator comparator;
-  nth_element(data_holder.begin(), data_holder.begin() + (k - 1), data_holder.end(), comparator);
+  nth_element(data_holder.begin(), data_holder.begin() + (k - 1), data_holder.end(), comparer);
 
   // sort the top k elements if needed - O (k log k)
   if (sort_top_k) {
-    std::sort(data_holder.begin(), data_holder.begin() + k, comparator);
+    std::sort(data_holder.begin(), data_holder.begin() + k, comparer);
   }
 
-  // the data_holder now contains the top k elements in the first k indices
+  // the data_holder now contains the indices of the top k elements in the first k elements
 }
+#else
+// Selects the top k elements (largest or smallest based on template parameter)
+template <class Comparator>
+static void SelectTopK(const Comparator& comparer,
+                       const typename Comparator::DataType* raw_data,
+                       int64_t row_offset, int64_t num_blocks, int64_t block_slice, int64_t inter_block_offset,
+                       const unsigned k, bool sort_top_k,
+                       vector<pair<typename Comparator::DataType, int64_t>>& data_holder) {
+  data_holder.clear();
+  data_holder.reserve(num_blocks);
 
-template <class _Ty, class _Pr = less<typename std::vector<_Ty>::value_type>>
-class reusable_priority_queue : public std::priority_queue<_Ty, std::vector<_Ty>, _Pr> {
- public:
-  reusable_priority_queue() = default;
-
-  const std::vector<_Ty>& unsorted_results() const {
-    return std::priority_queue<_Ty, std::vector<_Ty>, _Pr>::c;
+  const auto* cur_value = raw_data + row_offset + inter_block_offset;
+  for (int64_t l = 0; l < num_blocks; ++l) {
+    data_holder.push_back({*cur_value, l});
+    cur_value += block_slice;
   }
 
-  void reset(size_t size) {
-    std::priority_queue<_Ty, std::vector<_Ty>, _Pr>::c.clear();
-    std::priority_queue<_Ty, std::vector<_Ty>, _Pr>::c.reserve(size);
+  // find the top k (largest or smallest) elements in the data holder - O(n) average. O(n*n) worst case.
+  // See https://en.wikipedia.org/wiki/Quickselect
+  nth_element(data_holder.begin(), data_holder.begin() + (k - 1), data_holder.end(), comparer);
+
+  // sort the top k elements if needed - O (k log k)
+  if (sort_top_k) {
+    std::sort(data_holder.begin(), data_holder.begin() + k, comparer);
   }
-};
+
+  // the data_holder now contains the indices of the top k elements in the first k elements
+}
+#endif
 
 // Given an input tensor 'input' and metadata values - 'k' and 'axis_parsed',
 // this method will extract the sorted top k largest/smallest elements and place them in the output tensor 'values'
 // along with the metadata output 'indices'
 template <class Comparator>
-static void extract_top_k_elements(const Tensor* input, const TensorShape& input_shape, Tensor* values,
-                                   Tensor* indices, const TensorShape& output_shape, const unsigned k, bool sorted,
-                                   const unsigned axis_parsed, concurrency::ThreadPool* threadpool) {
+static void FindTopKElements(const Tensor* input, const TensorShape& input_shape, Tensor* values,
+                             Tensor* indices, const TensorShape& output_shape, const unsigned k, bool sorted,
+                             const unsigned axis_parsed, concurrency::ThreadPool* threadpool) {
   // Cache some values that will be used in the implementation below
   const int64_t rows = input_shape.SizeToDimension(static_cast<size_t>(axis_parsed));
   const int64_t cols = input->Shape().Size() / rows;
-  auto input_map =
-      ConstEigenMatrixMapRowMajor<typename Comparator::DataType>(
-          static_cast<const typename Comparator::DataType*>(input->template Data<typename Comparator::DataType>()), rows, cols);
+  const auto* input_data = input->template Data<typename Comparator::DataType>();
 
-  // Use Eigen maps to allow indexing into the 2d tensors like Values_map(i,j)
+  // Use Eigen maps for convenient indexing into the 2d tensors like Values_map(i,j)
   const int64_t reduced_cols = output_shape.SizeFromDimension(static_cast<size_t>(axis_parsed));
-  auto values_map = EigenMatrixMapRowMajor<typename Comparator::DataType>(
-      values->template MutableData<typename Comparator::DataType>(), rows, reduced_cols);
-  auto indices_map = EigenMatrixMapRowMajor<int64_t>(indices->template MutableData<int64_t>(), rows, reduced_cols);
+
+  auto* values_data = values->template MutableData<typename Comparator::DataType>();
+  auto* indices_data = indices->template MutableData<int64_t>();
+  auto values_map = EigenMatrixMapRowMajor<typename Comparator::DataType>(values_data, rows, reduced_cols);
+  auto indices_map = EigenMatrixMapRowMajor<int64_t>(indices_data, rows, reduced_cols);
 
   // This is basically the number of elements within each of the "k" rows
-  const int64_t block_slice = reduced_cols / k;
   const int64_t num_blocks = input_shape[axis_parsed];
+  const int64_t block_slice = reduced_cols / k;
+
+  // if we don't have enough input we can't produce enough output.
+  // TODO: Is this permissible? If so the output shape must also allow for less than k entries and the
+  // ONNX shape inferencing needs updating.
+  // Both the priority queue and SelectTopK paths below would need updating to handle this scenario.
+  ORT_ENFORCE(num_blocks >= k, "Less than k values in axis. k=", k, " axis=", axis_parsed, " values=", num_blocks);
 
   int64_t tp_threads = threadpool != nullptr ? threadpool->NumThreads() : 1;
   int64_t num_threads = std::min(tp_threads, rows);
 
-  // rough attempt to make sure there's enough work for each thread
+  // rough attempt to make sure there's enough work for each thread. if there's insufficient work the usage of
+  // too many threads degrades performance
   auto total_work = rows * block_slice * num_blocks;
   while (num_threads > 1 && (total_work / num_threads) < 4 * 1024) {
     --num_threads;
   }
 
-  std::function<void(std::ptrdiff_t batch)> find_top_k;
-
-  // from testing various batch sizes relative to k, the following works well as a selector.
+  // from testing various batch sizes relative to k, the following appears to work well as a selector.
   // tested with following combinations
   //   batch_size = [ 8, 16, 32, 64, 128, 256, 512, 1024, 2048 ]
   //            k = [ 1, 2, 4, 6, 8, 16, 24, 32, 48, 64, 128 ]
-  bool use_priority_queue = k < 4 || (std::log2(k) / std::log2(num_blocks)) <= 0.70;
+  bool use_priority_queue = k != 1 && (k < 4 || (std::log2(k) / std::log2(num_blocks)) < 0.725);
 
-  if (use_priority_queue) {
+  std::function<void(std::ptrdiff_t batch)> find_top_k;
+
+  if (k == 1) {
+    // just need to compare values and not indexes as the first instance of the best value is always selected
     find_top_k =
-        [num_threads, rows, block_slice, num_blocks, k, sorted,
-         &input_map, &values_map, &indices_map](std::ptrdiff_t batch) {
+        [num_threads, rows, block_slice, num_blocks, input_data, cols, &values_map, &indices_map](std::ptrdiff_t batch) {
           int64_t start_row = static_cast<int64_t>(batch * rows / num_threads);
           int64_t end_row = static_cast<int64_t>((batch + 1) * rows / num_threads);
 
-          reusable_priority_queue<pair<typename Comparator::DataType, int64_t>, Comparator> heap;
-          Comparator comparer;
+          Comparator comparer(input_data);
 
           for (int64_t i = start_row; i < end_row; ++i) {
+            auto row_offset = i * cols;
             for (int64_t j = 0; j < block_slice; ++j) {
-              heap.reset(k);
+              int64_t top_idx = row_offset + j;
+              auto cur_idx = top_idx;
+              auto best = input_data[cur_idx];  // save top value so we only have one load in the CompareValueOnly call
 
-              int64_t l = 0;
-              // add first k items
-              for (; l < k && l < num_blocks; ++l) {
-                heap.push({input_map(i, l * block_slice + j), l});
+              for (int64_t l = 1; l < num_blocks; ++l) {
+                cur_idx += block_slice;
+                if (comparer.CompareValueOnly(input_data[cur_idx], best)) {
+                  top_idx = cur_idx;
+                  best = input_data[cur_idx];
+                }
               }
 
+              values_map(i, j) = input_data[top_idx];
+              // convert overall index to result index
+              // avoid '/' if possible for perf reasons
+              indices_map(i, j) = block_slice == 1 ? (top_idx - row_offset - j)
+                                                   : (top_idx - row_offset - j) / block_slice;
+            }
+          }
+        };
+  } else if (use_priority_queue) {
+    find_top_k =
+        [num_threads, rows, block_slice, num_blocks, k, sorted,
+         input_data, cols, &values_map, &indices_map](std::ptrdiff_t batch) {
+          int64_t start_row = static_cast<int64_t>(batch * rows / num_threads);
+          int64_t end_row = static_cast<int64_t>((batch + 1) * rows / num_threads);
+
+          Comparator comparer(input_data);
+#ifdef USE_INDEX_ONLY
+          std::vector<int64_t> indices_data(k, -1);
+          int64_t* indices = indices_data.data();  // raw pointer is slightly faster for HeapifyIthPosition
+
+          for (int64_t i = start_row; i < end_row; ++i) {
+            const auto row_offset = i * cols;
+
+            for (int64_t j = 0; j < block_slice; ++j) {
+              int64_t l = 0;
+              auto cur_idx = row_offset + j;
+
+              // add first k items starting from the bottom up
+              for (; l < k; ++l) {
+                indices[k - l - 1] = cur_idx;
+                HeapifyIthPosition(input_data, indices, k - l - 1, k, comparer);
+
+                cur_idx += block_slice;
+              }
+
+              // insert remainder if the next value would replace the top of the heap (current worst top k value)
+              // save top so we only have one load in the CompareValueOnly call
+              auto top = input_data[indices[0]];
               for (; l < num_blocks; ++l) {
-                std::pair<typename Comparator::DataType, int64_t> item(input_map(i, l * block_slice + j), l);
-                if (comparer(item, heap.top())) {
-                  heap.pop();
-                  heap.push(item);
+                // we can compare value only. if the current value is equal to the top of the heap it won't
+                // replace it as the index will be higher.
+                if (comparer.CompareValueOnly(input_data[cur_idx], top)) {
+                  indices[0] = cur_idx;
+                  HeapifyIthPosition(input_data, indices, 0, k, comparer);
+                  top = input_data[indices[0]];
                 }
+
+                cur_idx += block_slice;
               }
 
               if (sorted) {
                 // Extract these k elements and place them in the results placeholder
                 for (l = 0; l < k; ++l) {
-                  const auto& elem = heap.top();
+                  auto idx = indices[0];
                   auto col_index = (k - l - 1) * block_slice + j;
-                  values_map(i, col_index) = elem.first;
-                  indices_map(i, col_index) = elem.second;
-                  heap.pop();
+                  values_map(i, col_index) = input_data[idx];
+                  // convert overall index to result index. avoid '/' if possible for perf reasons
+                  indices_map(i, col_index) = block_slice == 1 ? (idx - row_offset - j)
+                                                               : (idx - row_offset - j) / block_slice;
+
+                  // put the last value at the top of the heap to replace the removed one, and push it into
+                  // place in a heap one smaller.
+                  indices[0] = indices[k - l - 1];
+                  HeapifyIthPosition(input_data, indices, 0, k - l - 1, comparer);
                 }
               } else {
-                const auto& results = heap.unsorted_results();
                 for (l = 0; l < k; ++l) {
-                  const auto& elem = results[l];
+                  int64_t idx = indices[l];
                   auto col_index = l * block_slice + j;
-                  values_map(i, col_index) = elem.first;
-                  indices_map(i, col_index) = elem.second;
+                  values_map(i, col_index) = input_data[idx];
+                  // convert overall index to result index. avoid '/' if possible for perf reasons
+                  indices_map(i, col_index) = block_slice == 1 ? (idx - row_offset - j)
+                                                               : (idx - row_offset - j) / block_slice;
                 }
               }
             }
           }
+#else
+          vector<pair<typename Comparator::DataType, int64_t>> heap_data(k);
+          // need to use raw pointer for maximum performance.
+          auto* heap = heap_data.data();
+
+          for (int64_t i = start_row; i < end_row; ++i) {
+            const auto row_offset = i * cols;
+
+            for (int64_t j = 0; j < block_slice; ++j) {
+              int64_t l = 0;
+              auto cur_idx = row_offset + j;
+
+              // add first k items starting from the bottom up
+              for (; l < k; ++l) {
+                heap[k - l - 1] = {input_data[cur_idx], l};
+                HeapifyIthPosition(heap, k - l - 1, k, comparer);
+
+                cur_idx += block_slice;
+              }
+
+              // insert remainder if the next value would replace the top of the heap
+              for (; l < num_blocks; ++l) {
+                pair<typename Comparator::DataType, int64_t> cur_pair{input_data[cur_idx], l};
+                if (comparer(cur_pair, heap[0])) {
+                  heap[0] = cur_pair;
+                  HeapifyIthPosition(heap, 0, k, comparer);
+                }
+
+                cur_idx += block_slice;
+              }
+
+              if (sorted) {
+                // Extract these k elements and place them in the results placeholder
+                for (l = 0; l < k; ++l) {
+                  const auto& entry = heap[0];
+                  auto col_index = (k - l - 1) * block_slice + j;
+                  values_map(i, col_index) = entry.first;
+                  indices_map(i, col_index) = entry.second;
+
+                  // put the last value at the top of the heap to replace the removed one, and push it into
+                  // place in a heap one smaller.
+                  heap[0] = heap[k - l - 1];
+                  HeapifyIthPosition(heap, 0, k - l - 1, comparer);
+                }
+              } else {
+                for (l = 0; l < k; ++l) {
+                  const auto& entry = heap[l];
+                  auto col_index = l * block_slice + j;
+                  values_map(i, col_index) = entry.first;
+                  indices_map(i, col_index) = entry.second;
+                }
+              }
+            }
+          }
+#endif
         };
   } else {
     find_top_k =
         [num_threads, rows, block_slice, num_blocks, k, sorted,
-         &input_map, &values_map, &indices_map](std::ptrdiff_t batch) {
+         input_data, cols,
+         &values_map, &indices_map](std::ptrdiff_t batch) {
           int64_t start_row = static_cast<int64_t>(batch * rows / num_threads);
           int64_t end_row = static_cast<int64_t>((batch + 1) * rows / num_threads);
 
-          // we re-use a single data_holder for performance. avoids allocating memory on each iteration
-          vector<pair<typename Comparator::DataType, int64_t>> data_holder;
+          // for SelectTopK it's faster to just store the index and lookup the value each time.
+          // we're using this path when we need to select a lot of values, so the
+          Comparator comparer(input_data);
 
-          for (int64_t i = start_row; i < end_row; ++i) {
-            for (int64_t j = 0; j < block_slice; ++j) {
-              select_top_k<Comparator>(input_map, i, num_blocks, block_slice, j, k, sorted, data_holder);
+#ifdef USE_INDEX_ONLY
+          {
+            // this approach saves storing the value with the index, but costs locality for the comparisons
+            // and costs to convert the index value
 
-              // Insert the top 'k' (largest or smallest) elements into the final output buffers
-              for (int64_t l = 0; l < k; ++l) {
-                const auto& elem = data_holder[l];
-                auto col_index = l * block_slice + j;
-                values_map(i, col_index) = elem.first;
-                indices_map(i, col_index) = elem.second;
+            // we re-use a single data_holder for performance. avoids allocating memory on each iteration
+            std::vector<int64_t> data_holder;
+
+            for (int64_t i = start_row; i < end_row; ++i) {
+              auto row_offset = i * cols;
+              for (int64_t j = 0; j < block_slice; ++j) {
+                SelectTopK<Comparator>(comparer, input_data, row_offset, num_blocks, block_slice, j, k, sorted, data_holder);
+
+                // Insert the top 'k' (largest or smallest) elements into the final output buffers
+                for (int64_t l = 0; l < k; ++l) {
+                  int64_t idx = data_holder[l];
+                  auto col_index = l * block_slice + j;
+                  values_map(i, col_index) = input_data[idx];
+                  // convert overall index to result index. avoid the cost of the '/' is possible
+                  indices_map(i, col_index) = block_slice == 1 ? (idx - row_offset - j)
+                                                               : (idx - row_offset - j) / block_slice;
+                }
               }
             }
           }
+#else
+          // this approach costs extra space for to store the value by comparison locality is better
+          // and there's no conversion of the idx back
+          {
+            vector<pair<typename Comparator::DataType, int64_t>> data_holder;
+
+            for (int64_t i = start_row; i < end_row; ++i) {
+              auto row_offset = i * cols;
+              for (int64_t j = 0; j < block_slice; ++j) {
+                SelectTopK<Comparator>(comparer, input_data, row_offset, num_blocks, block_slice, j, k, sorted,
+                                       data_holder);
+
+                // Insert the top 'k' (largest or smallest) elements into the final output buffers
+                for (int64_t l = 0; l < k; ++l) {
+                  const auto& pair = data_holder[l];
+                  auto col_index = l * block_slice + j;
+                  values_map(i, col_index) = pair.first;
+                  indices_map(i, col_index) = pair.second;
+                }
+              }
+            }
+          }
+#endif
         };
   }
 
@@ -219,7 +549,7 @@ static void extract_top_k_elements(const Tensor* input, const TensorShape& input
     // the alternative would be to use TryBatchParallelFor with the lambda doing one row.
     threadpool->SimpleParallelFor(num_threads, find_top_k);
   }
-}
+}  // namespace onnxruntime
 
 // Wrapper over core TopK implementation
 template <typename T>
@@ -254,12 +584,30 @@ static Status TopKImpl(OpKernelContext* p_op_kernel_context, const Tensor* input
 
   auto* threadpool = p_op_kernel_context->GetOperatorThreadPool();
 
-  if (largest) {
-    extract_top_k_elements<GreaterValueCmp<T>>(input, input_shape, values, indices, output_shape, k, sorted,
-                                               gsl::narrow_cast<unsigned>(axis_parsed), threadpool);
-  } else {
-    extract_top_k_elements<LesserValueCmp<T>>(input, input_shape, values, indices, output_shape, k, sorted,
-                                              gsl::narrow_cast<unsigned>(axis_parsed), threadpool);
+#ifdef X_IMPL
+  if (input_shape.NumDimensions() <= 2 && axis_parsed == static_cast<int64_t>(input_shape.NumDimensions() - 1)) {
+    int64_t* p_indices = indices->MutableData<int64_t>();
+    const T* p_input = input->Data<T>();
+    T* p_values = values->MutableData<T>();
+    if (largest) {
+      // extract sorted largest TopK elements
+      topk_element<HeapMax<T>>(p_indices, k, p_input, input_shape, sorted, 10);
+      topk_element_fetch(p_values, p_input, input_shape, p_indices, output_shape);
+    } else {
+      // extract sorted smallest TopK elements
+      topk_element<HeapMin<T>>(p_indices, k, p_input, input_shape, sorted, 10);
+      topk_element_fetch(p_values, p_input, input_shape, p_indices, output_shape);
+    }
+  } else
+#endif
+  {
+    if (largest) {
+      FindTopKElements<GreaterValueCmp<T>>(input, input_shape, values, indices, output_shape, k, sorted,
+                                           gsl::narrow_cast<unsigned>(axis_parsed), threadpool);
+    } else {
+      FindTopKElements<LesserValueCmp<T>>(input, input_shape, values, indices, output_shape, k, sorted,
+                                          gsl::narrow_cast<unsigned>(axis_parsed), threadpool);
+    }
   }
 
   return Status::OK();
