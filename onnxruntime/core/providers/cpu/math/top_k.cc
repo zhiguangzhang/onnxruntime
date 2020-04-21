@@ -305,14 +305,12 @@ static void FindTopKElements(const Tensor* input, const TensorShape& input_shape
   ORT_ENFORCE(num_blocks >= k, "Less than k values in axis. k=", k, " axis=", axis_parsed, " values=", num_blocks);
 
   int64_t tp_threads = threadpool != nullptr ? threadpool->NumThreads() : 1;
-  int64_t num_threads = std::min(tp_threads, rows);
+  int64_t num_threads = std::min(tp_threads, rows);  // split on rows so can't have more threads than rows
 
   // rough attempt to make sure there's enough work for each thread. if there's insufficient work the usage of
-  // too many threads degrades performance
-  auto total_work = rows * block_slice * num_blocks;
-  while (num_threads > 1 && (total_work / num_threads) < 4 * 1024) {
-    --num_threads;
-  }
+  // too many threads degrades performance.
+  int64_t threads_needed = static_cast<int64_t>(std::floor(input_shape.Size() * k / (32 * 1024)));
+  num_threads = std::max(std::min(threads_needed, num_threads), 1LL);
 
   // from testing various batch sizes relative to k, the following appears to work well as a selector.
   // tested with following combinations
@@ -334,19 +332,21 @@ static void FindTopKElements(const Tensor* input, const TensorShape& input_shape
           for (int64_t i = start_row; i < end_row; ++i) {
             auto row_offset = i * cols;
             for (int64_t j = 0; j < block_slice; ++j) {
-              int64_t top_idx = row_offset + j;
-              auto cur_idx = top_idx;
-              auto best = input_data[cur_idx];  // save top value so we only have one load in the CompareValueOnly call
+              int64_t cur_idx = row_offset + j;
+
+              const auto* cur_value = input_data + cur_idx;  // using pointer to data is faster than input_data[cur_idx]
+              auto best = *cur_value;                        // save best value so we only have one load in the CompareValueOnly call
+              int64_t top_idx = cur_idx;
 
               for (int64_t l = 1; l < num_blocks; ++l) {
-                cur_idx += block_slice;
-                if (comparer.CompareValueOnly(input_data[cur_idx], best)) {
-                  top_idx = cur_idx;
-                  best = input_data[cur_idx];
+                cur_value += block_slice;
+                if (comparer.CompareValueOnly(*cur_value, best)) {
+                  best = *cur_value;
+                  top_idx = cur_value - input_data;
                 }
               }
 
-              values_map(i, j) = input_data[top_idx];
+              values_map(i, j) = best;
               // convert overall index to result index
               // avoid '/' if possible for perf reasons
               indices_map(i, j) = block_slice == 1 ? (top_idx - row_offset - j)
