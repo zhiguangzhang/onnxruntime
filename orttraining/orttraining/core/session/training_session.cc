@@ -21,6 +21,10 @@
 //Gist Encoding
 #include "orttraining/core/optimizer/gist_encode_decode.h"
 
+//Memory Swap
+#include "orttraining/core/optimizer/memory_swap_rewriter.h"
+#include "orttraining/core/optimizer/promote_topo_order_rewriter.h"
+
 #ifdef USE_CUDA
 #include "core/providers/cuda/cuda_common.h"
 #include "core/providers/cuda/cuda_allocator.h"
@@ -105,6 +109,39 @@ Status SetupOptimizerParams(
 bool IsRootNode(const TrainingSession::TrainingConfiguration& config) {
   return config.distributed_config.world_rank == 0;
 }
+
+void DumpAfterAddControlEdge(const Graph& graph) {
+  GraphViewer gv(graph);
+  for (auto i : gv.GetNodesInTopologicalOrder()) {
+    const auto& node = *gv.GetNode(i);
+    std::cout << node.Name() << "(" << node.OpType() << ") [";
+    const auto* shape_proto = node.OutputDefs()[0]->Shape();
+    if (shape_proto) {
+      for (auto dim : shape_proto->dim()) {
+        if (dim.has_dim_value())
+          std::cout << dim.dim_value();
+        else if (dim.has_dim_param())
+          std::cout << dim.dim_param();
+        else
+          std::cout << "?";
+
+        std::cout << ",";
+      }
+    } else {
+      std::cout << "*";
+    }
+    std::cout << "], Output/control to {";
+    for (auto out_iter = node.OutputEdgesBegin(); out_iter != node.OutputEdgesEnd(); ++out_iter) {
+      if (out_iter->IsControlEdge()) {
+        std::cout << "(c) ";
+      }
+      std::cout << out_iter->GetNode().Name() << "(" << out_iter->GetNode().OpType() << "), ";
+    }
+    std::cout << "}" << std::endl;
+  }
+  std::cout << std::endl;
+}
+
 }  // namespace
 
 Status TrainingSession::ConfigureForTraining(
@@ -264,6 +301,13 @@ Status TrainingSession::ConfigureForTraining(
   // add GIST encoding
   if (config.gist_config.has_value()) {
     ORT_RETURN_IF_ERROR(AddGistEncoding());
+  }
+
+  // add mem swap
+  if (config.memswap_config.has_value()) {
+    // we need to run predefined optimization again
+    // to make sure memory swap on final graph
+    ORT_RETURN_IF_ERROR(AddMemorySwap(config.memswap_config.value().min_topo_distance));
   }
 
   if (IsRootNode(config) && config.model_with_training_graph_path.has_value()) {
@@ -452,6 +496,37 @@ Status TrainingSession::AddGistEncoding() {
     return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "Failed to add Gist Encoding:", exp.what());
   }
   return DoPostLoadProcessing(*model_);
+}
+
+Status TrainingSession::AddMemorySwap(int min_topo_distance) {
+  Graph& graph = model_->MainGraph();
+
+  // apply default transformers in inference session, same as in core/framework/session_options.h
+  // this is required to make sure mem swap nodes are instead in the right place in final graph.
+  // 10 is the same as in max_num_graph_transformation_steps in core/framework/session_options.h
+  onnxruntime::GraphTransformerManager default_graph_transformation_mgr{10};
+  AddPredefinedTransformers(default_graph_transformation_mgr, TransformerLevel::Level2, {});
+  graph.Resolve();
+
+  // then apply mem swap transformers
+  onnxruntime::GraphTransformerManager memswap_graph_transformation_mgr{1};
+
+  auto transformer1 = onnxruntime::make_unique<RuleBasedGraphTransformer>("RuleMemSwapTransformer");
+  ORT_RETURN_IF_ERROR(transformer1->Register(onnxruntime::make_unique<MemorySwapRewriter>(min_topo_distance)));
+  ORT_RETURN_IF_ERROR(memswap_graph_transformation_mgr.Register(std::move(transformer1), TransformerLevel::Level3));
+
+  auto transformer2 = onnxruntime::make_unique<RuleBasedGraphTransformer>("RulePromoteTopologicalOrderTransformer");
+  ORT_RETURN_IF_ERROR(transformer2->Register(onnxruntime::make_unique<PromoteTopologicalOrderRewriter>()));
+  ORT_RETURN_IF_ERROR(memswap_graph_transformation_mgr.Register(std::move(transformer2), TransformerLevel::Level3));
+
+  ORT_RETURN_IF_ERROR(memswap_graph_transformation_mgr.ApplyTransformers(graph, TransformerLevel::Level3, *session_logger_));
+
+#if 0
+  std::cout << "Topo order after memory swap:" << std::endl;
+  DumpAfterAddControlEdge(graph);
+#endif
+
+  return Status::OK();
 }
 
 Status TrainingSession::AddTensorboard(const std::string& summary_name,
