@@ -371,8 +371,8 @@ class Node {
         control_output_edges.clear();
       } else {
         // restore control edges after clear
-        input_edges = control_input_edges;
-        output_edges = control_output_edges;
+        input_edges.insert(control_input_edges.begin(), control_input_edges.end());
+        output_edges.insert(control_output_edges.begin(), control_output_edges.begin());
       }
     }
 
