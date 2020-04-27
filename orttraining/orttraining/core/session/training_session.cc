@@ -109,39 +109,6 @@ Status SetupOptimizerParams(
 bool IsRootNode(const TrainingSession::TrainingConfiguration& config) {
   return config.distributed_config.world_rank == 0;
 }
-
-void DumpAfterAddControlEdge(const Graph& graph) {
-  GraphViewer gv(graph);
-  for (auto i : gv.GetNodesInTopologicalOrder()) {
-    const auto& node = *gv.GetNode(i);
-    std::cout << node.Name() << "(" << node.OpType() << ") [";
-    const auto* shape_proto = node.OutputDefs()[0]->Shape();
-    if (shape_proto) {
-      for (auto dim : shape_proto->dim()) {
-        if (dim.has_dim_value())
-          std::cout << dim.dim_value();
-        else if (dim.has_dim_param())
-          std::cout << dim.dim_param();
-        else
-          std::cout << "?";
-
-        std::cout << ",";
-      }
-    } else {
-      std::cout << "*";
-    }
-    std::cout << "], Output/control to {";
-    for (auto out_iter = node.OutputEdgesBegin(); out_iter != node.OutputEdgesEnd(); ++out_iter) {
-      if (out_iter->IsControlEdge()) {
-        std::cout << "(c) ";
-      }
-      std::cout << out_iter->GetNode().Name() << "(" << out_iter->GetNode().OpType() << "), ";
-    }
-    std::cout << "}" << std::endl;
-  }
-  std::cout << std::endl;
-}
-
 }  // namespace
 
 Status TrainingSession::ConfigureForTraining(
@@ -167,7 +134,7 @@ Status TrainingSession::ConfigureForTraining(
 
   std::string loss_name{};
   optional<std::string> loss_scale_input_name =
-        is_mixed_precision_enabled_ ? optional<std::string>{""} : optional<std::string>{};
+      is_mixed_precision_enabled_ ? optional<std::string>{""} : optional<std::string>{};
   if (config.use_pipeline) {
     // if use pipeline, first check if model contains send op. If it does, set the
     // send node's output as the start tensor to build gradient graph
@@ -235,14 +202,13 @@ Status TrainingSession::ConfigureForTraining(
   // TODO: this is a temp workaround for removing rank tensor before adding optimizer.
   // Re-visit after we port logic for model splitting and hence know the rank tensor name.
   for (auto it = weights_to_train_.begin(); it != weights_to_train_.end();) {
-      const auto* node_arg = model_->MainGraph().GetNodeArg(*it);
-      ORT_RETURN_IF_NOT(node_arg, "Failed to get NodeArg with name ", *it);
-      if (node_arg->TypeAsProto()->tensor_type().elem_type() != ONNX_NAMESPACE::TensorProto_DataType_FLOAT) {
-        it = weights_to_train_.erase(it);
-      }
-      else{
-          ++it;
-      }
+    const auto* node_arg = model_->MainGraph().GetNodeArg(*it);
+    ORT_RETURN_IF_NOT(node_arg, "Failed to get NodeArg with name ", *it);
+    if (node_arg->TypeAsProto()->tensor_type().elem_type() != ONNX_NAMESPACE::TensorProto_DataType_FLOAT) {
+      it = weights_to_train_.erase(it);
+    } else {
+      ++it;
+    }
   }
 
   // add optimizer or gradient accumulation
@@ -523,7 +489,35 @@ Status TrainingSession::AddMemorySwap(int min_topo_distance) {
 
 #if 0
   std::cout << "Topo order after memory swap:" << std::endl;
-  DumpAfterAddControlEdge(graph);
+  GraphViewer gv(graph);
+  for (auto i : gv.GetNodesInTopologicalOrder()) {
+    const auto& node = *gv.GetNode(i);
+    std::cout << node.Name() << "(" << node.OpType() << ") [";
+    const auto* shape_proto = node.OutputDefs()[0]->Shape();
+    if (shape_proto) {
+      for (auto dim : shape_proto->dim()) {
+        if (dim.has_dim_value())
+          std::cout << dim.dim_value();
+        else if (dim.has_dim_param())
+          std::cout << dim.dim_param();
+        else
+          std::cout << "?";
+
+        std::cout << ",";
+      }
+    } else {
+      std::cout << "*";
+    }
+    std::cout << "], Output/control to {";
+    for (auto out_iter = node.OutputEdgesBegin(); out_iter != node.OutputEdgesEnd(); ++out_iter) {
+      if (out_iter->IsControlEdge()) {
+        std::cout << "(c) ";
+      }
+      std::cout << out_iter->GetNode().Name() << "(" << out_iter->GetNode().OpType() << "), ";
+    }
+    std::cout << "}" << std::endl;
+  }
+  std::cout << std::endl;
 #endif
 
   return Status::OK();
