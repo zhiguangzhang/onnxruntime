@@ -11,5 +11,5 @@ TestEnv::TestEnv(const std::vector<ITestCase*>& tests1, TestResultStat& stat1, O
 }
 
 TestEnv::~TestEnv() {
-  delete finished;
+  // need dtor in .cc so 'finished' can be cleaned up as TestCastResult only has a forward declaration in the header.
 }

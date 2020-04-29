@@ -272,7 +272,7 @@ OrtValue* TensorToOrtValue(const ONNX_NAMESPACE::TensorProto& t, onnxruntime::te
   return temp_value.release();
 }
 
-void LoopDataFile(int test_data_pb_fd, bool is_input, const TestModelInfo* modelinfo,
+void LoopDataFile(int test_data_pb_fd, bool is_input, const TestModelInfo& modelinfo,
                   std::unordered_map<std::string, OrtValue*>& name_data_map, onnxruntime::test::HeapBuffer& b,
                   std::ostringstream& oss) {
   google::protobuf::io::FileInputStream f(test_data_pb_fd);
@@ -328,7 +328,7 @@ void LoopDataFile(int test_data_pb_fd, bool is_input, const TestModelInfo* model
       std::string value_name = data.name();
       if (value_name.empty()) {
         const size_t c = name_data_map.size();
-        value_name = is_input ? modelinfo->GetInputName(c) : modelinfo->GetOutputName(c);
+        value_name = is_input ? modelinfo.GetInputName(c) : modelinfo.GetOutputName(c);
       }
 
       auto pv = name_data_map.insert(std::make_pair(value_name, gvalue.release()));
@@ -353,8 +353,8 @@ void LoopDataFile(int test_data_pb_fd, bool is_input, const TestModelInfo* model
 
 }  // namespace
 
-TestModelInfo* TestModelInfo::LoadOnnxModel(_In_ const PATH_CHAR_TYPE* model_url) {
-  return new OnnxModelInfo(model_url);
+std::unique_ptr<TestModelInfo> TestModelInfo::LoadOnnxModel(_In_ const PATH_CHAR_TYPE* model_url) {
+  return std::unique_ptr<TestModelInfo>(new OnnxModelInfo(model_url));
 }
 
 /**
@@ -368,12 +368,12 @@ TestModelInfo* TestModelInfo::LoadOnnxModel(_In_ const PATH_CHAR_TYPE* model_url
 class OnnxTestCase : public ITestCase {
  private:
   std::string test_case_name_;
-  std::vector<std::string> debuginfo_strings;
-  onnxruntime::OrtMutex m_;
+  mutable std::vector<std::string> debuginfo_strings;
+  mutable onnxruntime::OrtMutex m_;
 
   std::vector<std::basic_string<PATH_CHAR_TYPE>> test_data_dirs_;
 
-  std::string GetDatasetDebugInfoString(size_t dataset_id) override {
+  std::string GetDatasetDebugInfoString(size_t dataset_id) const override {
     std::lock_guard<OrtMutex> l(m_);
     if (dataset_id < debuginfo_strings.size()) {
       return debuginfo_strings[dataset_id];
@@ -382,62 +382,59 @@ class OnnxTestCase : public ITestCase {
     return std::string();
   }
 
-  void ConvertTestData(const std::vector<ONNX_NAMESPACE::TensorProto>& test_data_pbs, onnxruntime::test::HeapBuffer& b,
-                       bool is_input,
-                       std::unordered_map<std::string, OrtValue*>& out);
+  void ConvertTestData(const std::vector<ONNX_NAMESPACE::TensorProto>& test_data_pbs,
+                       onnxruntime::test::HeapBuffer& b, bool is_input,
+                       std::unordered_map<std::string, OrtValue*>& out) const;
 
   std::once_flag model_parsed_;
   std::once_flag config_parsed_;
   double per_sample_tolerance_;
   double relative_per_sample_tolerance_;
   bool post_processing_;
-  TestModelInfo* model_info_;
+  std::unique_ptr<TestModelInfo> model_info_;
   ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(OnnxTestCase);
 
  public:
-  OnnxTestCase(const std::string& test_case_name, _In_ TestModelInfo* model, double default_per_sample_tolerance,
-               double default_relative_per_sample_tolerance);
-  ~OnnxTestCase() override { delete model_info_; }
-  Status GetPerSampleTolerance(double* value) override;
-  Status GetRelativePerSampleTolerance(double* value) override;
-  Status GetPostProcessing(bool* value) override;
+  OnnxTestCase(const std::string& test_case_name, _In_ std::unique_ptr<TestModelInfo> model,
+               double default_per_sample_tolerance, double default_relative_per_sample_tolerance);
+  Status GetPerSampleTolerance(double* value) const override;
+  Status GetRelativePerSampleTolerance(double* value) const override;
+  Status GetPostProcessing(bool* value) const override;
 
   const ONNX_NAMESPACE::ValueInfoProto* GetOutputInfoFromModel(size_t i) const override {
     return model_info_->GetOutputInfoFromModel(i);
   }
 
-  size_t GetDataCount() const override {
-    return test_data_dirs_.size();
-  }
+  size_t GetDataCount() const override { return test_data_dirs_.size(); }
   const std::string& GetNodeName() const override { return model_info_->GetNodeName(); }
-
   const PATH_CHAR_TYPE* GetModelUrl() const override { return model_info_->GetModelUrl(); }
-  const std::string& GetTestCaseName() const override {
-    return test_case_name_;
-  }
-  std::string GetTestCaseVersion() const override {
-    return model_info_->GetModelVersion();
-  }
+  const std::string& GetTestCaseName() const override { return test_case_name_; }
+  std::string GetTestCaseVersion() const override { return model_info_->GetModelVersion(); }
+
   void LoadTestData(size_t id, onnxruntime::test::HeapBuffer& b, std::unordered_map<std::string, OrtValue*>&,
-                    bool is_input) override;
+                    bool is_input) const override;
 };
 
-ITestCase* CreateOnnxTestCase(const std::string& test_case_name, TestModelInfo* model,
-                              double default_per_sample_tolerance, double default_relative_per_sample_tolerance) {
-  return new OnnxTestCase(test_case_name, model, default_per_sample_tolerance, default_relative_per_sample_tolerance);
+std::unique_ptr<ITestCase> CreateOnnxTestCase(const std::string& test_case_name,
+                                              std::unique_ptr<TestModelInfo> model,
+                                              double default_per_sample_tolerance,
+                                              double default_relative_per_sample_tolerance) {
+  return std::unique_ptr<ITestCase>(new OnnxTestCase(test_case_name, std::move(model),
+                                                     default_per_sample_tolerance,
+                                                     default_relative_per_sample_tolerance));
 }
 
-Status OnnxTestCase::GetPerSampleTolerance(double* value) {
+Status OnnxTestCase::GetPerSampleTolerance(double* value) const {
   *value = per_sample_tolerance_;
   return Status::OK();
 }
 
-Status OnnxTestCase::GetRelativePerSampleTolerance(double* value) {
+Status OnnxTestCase::GetRelativePerSampleTolerance(double* value) const {
   *value = relative_per_sample_tolerance_;
   return Status::OK();
 }
 
-Status OnnxTestCase::GetPostProcessing(bool* value) {
+Status OnnxTestCase::GetPostProcessing(bool* value) const {
   *value = post_processing_;
   return Status::OK();
 }
@@ -512,7 +509,7 @@ static void LoadTensors(const std::vector<PATH_STRING_TYPE>& pb_files,
 
 void OnnxTestCase::LoadTestData(size_t id, onnxruntime::test::HeapBuffer& b,
                                 std::unordered_map<std::string, OrtValue*>& name_data_map,
-                                bool is_input) {
+                                bool is_input) const {
   if (id >= test_data_dirs_.size()) {
     ORT_THROW("index out of bound");
   }
@@ -528,7 +525,7 @@ void OnnxTestCase::LoadTestData(size_t id, onnxruntime::test::HeapBuffer& b,
       oss << debuginfo_strings[id];
     }
     try {
-      LoopDataFile(test_data_pb_fd, is_input, model_info_, name_data_map, b, oss);
+      LoopDataFile(test_data_pb_fd, is_input, *model_info_, name_data_map, b, oss);
     } catch (std::exception& ex) {
       std::ostringstream oss2;
       oss2 << "parse data file \"" << ToMBString(test_data_pb) << "\" failed:" << ex.what();
@@ -557,6 +554,7 @@ void OnnxTestCase::LoadTestData(size_t id, onnxruntime::test::HeapBuffer& b,
             }
             return true;
           });
+
   SortTensorFileNames(test_data_pb_files);
 
   std::vector<ONNX_NAMESPACE::TensorProto> test_data_pbs;
@@ -566,7 +564,7 @@ void OnnxTestCase::LoadTestData(size_t id, onnxruntime::test::HeapBuffer& b,
 
 void OnnxTestCase::ConvertTestData(const std::vector<ONNX_NAMESPACE::TensorProto>& test_data_pbs,
                                    onnxruntime::test::HeapBuffer& b,
-                                   bool is_input, std::unordered_map<std::string, OrtValue*>& out) {
+                                   bool is_input, std::unordered_map<std::string, OrtValue*>& out) const {
   bool has_valid_names = true;
   std::vector<std::string> var_names(test_data_pbs.size());
   for (size_t input_index = 0; input_index != test_data_pbs.size(); ++input_index) {
@@ -611,9 +609,9 @@ void OnnxTestCase::ConvertTestData(const std::vector<ONNX_NAMESPACE::TensorProto
   }
 }
 
-OnnxTestCase::OnnxTestCase(const std::string& test_case_name, _In_ TestModelInfo* model,
+OnnxTestCase::OnnxTestCase(const std::string& test_case_name, _In_ std::unique_ptr<TestModelInfo> model,
                            double default_per_sample_tolerance, double default_relative_per_sample_tolerance)
-    : test_case_name_(test_case_name), model_info_(model) {
+    : test_case_name_(test_case_name), model_info_(std::move(model)) {
   std::basic_string<PATH_CHAR_TYPE> test_case_dir = model_info_->GetDir();
 
   // parse config

@@ -31,17 +31,18 @@ void ORT_CALLBACK RunTestCase(ORT_CALLBACK_INSTANCE pci, void* context, ORT_WORK
   OnnxRuntimeCloseThreadpoolWork(work);
   assert(context != nullptr);
   TestCaseTask* task(static_cast<TestCaseTask*>(context));
-  ITestCase* info = task->env.tests[task->task_id];
+  ITestCase& info = *task->env.tests[task->task_id];
   std::shared_ptr<TestCaseResult> ret;
   try {
-    RunSingleTestCase(info, task->env.env, task->env.sf, task->concurrent_runs, task->repeat_count, task->pool, pci, [task](std::shared_ptr<TestCaseResult> result, ORT_CALLBACK_INSTANCE pci) {
-      return OnTestCaseFinished(pci, task, result);
-    });
+    RunSingleTestCase(info, task->env.env, task->env.sf, task->concurrent_runs, task->repeat_count, task->pool, pci,
+                      [task](std::shared_ptr<TestCaseResult> result, ORT_CALLBACK_INSTANCE pci) {
+                        return OnTestCaseFinished(pci, task, result);
+                      });
     return;
   } catch (std::exception& ex) {
-    LOGF_DEFAULT(ERROR, "Test %s failed:%s", info->GetTestCaseName().c_str(), ex.what());
-    std::string node_name = info->GetNodeName();
-    ret = std::make_shared<TestCaseResult>(info->GetDataCount(), EXECUTE_RESULT::WITH_EXCEPTION, node_name);
+    LOGF_DEFAULT(ERROR, "Test %s failed:%s", info.GetTestCaseName().c_str(), ex.what());
+    std::string node_name = info.GetNodeName();
+    ret = std::make_shared<TestCaseResult>(info.GetDataCount(), EXECUTE_RESULT::WITH_EXCEPTION, node_name);
   }
   auto status = OnTestCaseFinished(pci, task, ret);
   if (!status.IsOK()) {
@@ -51,7 +52,7 @@ void ORT_CALLBACK RunTestCase(ORT_CALLBACK_INSTANCE pci, void* context, ORT_WORK
 }
 
 void PTestRunner::Start(ORT_CALLBACK_INSTANCE, size_t concurrent_runs) {
-  concurrent_runs = std::min<size_t>(std::max<size_t>(1, concurrent_runs), c_->GetDataCount());
+  concurrent_runs = std::min<size_t>(std::max<size_t>(1, concurrent_runs), c_.GetDataCount());
   next_test_to_run = 0;
   for (size_t i = 0; i != concurrent_runs; ++i) {
     if (!ScheduleNew()) {
@@ -62,7 +63,7 @@ void PTestRunner::Start(ORT_CALLBACK_INSTANCE, size_t concurrent_runs) {
 
 bool PTestRunner::ScheduleNew() {
   size_t next_test = next_test_to_run++;
-  if (next_test >= c_->GetDataCount()) return false;
+  if (next_test >= c_.GetDataCount()) return false;
   DataTask* t = new DataTask{this, next_test};
   Status st = CreateAndSubmitThreadpoolWork(RunSingleDataItem, t, tpool_);
   if (!st.IsOK()) {
@@ -76,22 +77,23 @@ bool PTestRunner::ScheduleNew() {
 void PTestRunner::OnTaskFinished(size_t, EXECUTE_RESULT, ORT_CALLBACK_INSTANCE pci) noexcept {
   try {
     ScheduleNew();
-    if (++finished == c_->GetDataCount()) {
+    if (++finished == c_.GetDataCount()) {
       //For each test case, only one DataTask can reach here
-      finish(pci);
+      Finish(pci);
     }
   } catch (std::exception& ex) {
-    LOGF_DEFAULT(ERROR, "%s:unrecoverable error:%s,exit...\n", c_->GetTestCaseName().c_str(), ex.what());
+    LOGF_DEFAULT(ERROR, "%s:unrecoverable error:%s,exit...\n", c_.GetTestCaseName().c_str(), ex.what());
     abort();
   } catch (...) {
-    LOGF_DEFAULT(ERROR, "%s:unrecoverable error,exit...\n", c_->GetTestCaseName().c_str());
+    LOGF_DEFAULT(ERROR, "%s:unrecoverable error,exit...\n", c_.GetTestCaseName().c_str());
     abort();
   }
 }
 
 PTestRunner::PTestRunner(OrtSession* session1,
-                         ITestCase* c, PThreadPool tpool,
-                         TestCaseCallBack on_finished1) : DataRunner(session1, c->GetTestCaseName(), c, on_finished1), next_test_to_run(0), finished(0), tpool_(tpool) {
+                         const ITestCase& c, PThreadPool tpool,
+                         TestCaseCallBack on_finished1)
+    : DataRunner(session1, c.GetTestCaseName(), c, on_finished1), next_test_to_run(0), finished(0), tpool_(tpool) {
 }
 
 void ORT_CALLBACK RunSingleDataItem(ORT_CALLBACK_INSTANCE instance, void* context, ORT_WORK work) {
@@ -104,7 +106,6 @@ void ORT_CALLBACK RunSingleDataItem(ORT_CALLBACK_INSTANCE instance, void* contex
 }
 
 Status OnTestCaseFinished(ORT_CALLBACK_INSTANCE pci, TestCaseTask* task, std::shared_ptr<TestCaseResult> result) {
-  FixedCountFinishCallback* finished = task->env.finished;
   auto task_id = task->task_id;
   bool failed = false;
   {
@@ -121,9 +122,12 @@ Status OnTestCaseFinished(ORT_CALLBACK_INSTANCE pci, TestCaseTask* task, std::sh
         return st;
     }
   }
+
+  FixedCountFinishCallback& finished = *task->env.finished;
   if (failed)
-    return finished->fail(pci);
-  return finished->onFinished(task_id, result, pci);
+    return finished.fail(pci);
+
+  return finished.onFinished(task_id, result, pci);
 }
 
 //Do not run this function in the thread pool passed in
@@ -155,9 +159,10 @@ static Status ParallelRunTests(TestEnv& env, int p_models, size_t current_runs, 
 Status RunTests(TestEnv& env, int p_models, int concurrent_runs, size_t repeat_count, PThreadPool tpool) {
   TestResultStat& stat = env.stat;
   stat.total_model_count = env.tests.size();
-  stat.total_test_case_count = std::accumulate(env.tests.begin(), env.tests.end(), static_cast<size_t>(0), [](size_t v, const ITestCase* info) {
-    return info->GetDataCount() + v;
-  });
+  stat.total_test_case_count = std::accumulate(env.tests.begin(), env.tests.end(), static_cast<size_t>(0),
+                                               [](size_t v, const ITestCase* info) {
+                                                 return info->GetDataCount() + v;
+                                               });
   std::vector<std::shared_ptr<TestCaseResult>> results;
   if (p_models > 1 && env.tests.size() > 1) {
     ORT_RETURN_IF_ERROR(ParallelRunTests(env, p_models, concurrent_runs, repeat_count, tpool));
@@ -169,17 +174,21 @@ Status RunTests(TestEnv& env, int p_models, int concurrent_runs, size_t repeat_c
       ORT_EVENT ev;
       ORT_RETURN_IF_ERROR(CreateOnnxRuntimeEvent(&ev));
       try {
-        RunSingleTestCase(env.tests[i], env.env, env.sf, concurrent_runs, repeat_count, tpool, nullptr, [repeat_count, &results, ev, concurrent_runs, test_case_name](std::shared_ptr<TestCaseResult> result, ORT_CALLBACK_INSTANCE pci) {
-          //TODO:output this information to a xml
-          if (concurrent_runs == 1) {
-            TIME_SPEC ts = result->GetSpentTime();
-            double spent = TimeSpecToSeconds(&ts);
-            double spent2 = spent / result->GetExcutionResult().size() / repeat_count;
-            LOGF_DEFAULT(ERROR, "Test %s finished in %.3g seconds, took %.3g for each input", test_case_name, spent, spent2);
-          }
-          results.push_back(result);
-          return OnnxRuntimeSetEventWhenCallbackReturns(pci, ev);
-        });
+        RunSingleTestCase(
+            *env.tests[i], env.env, env.sf, concurrent_runs, repeat_count, tpool, nullptr,
+            [repeat_count, &results, ev, concurrent_runs, test_case_name](std::shared_ptr<TestCaseResult> result,
+                                                                          ORT_CALLBACK_INSTANCE pci) {
+              //TODO:output this information to a xml
+              if (concurrent_runs == 1) {
+                TIME_SPEC ts = result->GetSpentTime();
+                double spent = TimeSpecToSeconds(&ts);
+                double spent2 = spent / result->GetExcutionResult().size() / repeat_count;
+                LOGF_DEFAULT(ERROR, "Test %s finished in %.3g seconds, took %.3g for each input",
+                             test_case_name, spent, spent2);
+              }
+              results.push_back(result);
+              return OnnxRuntimeSetEventWhenCallbackReturns(pci, ev);
+            });
         ORT_RETURN_IF_ERROR(WaitAndCloseEvent(ev));
       } catch (std::exception& ex) {
         LOGF_DEFAULT(ERROR, "Test %s failed:%s", test_case_name, ex.what());
@@ -246,7 +255,7 @@ void LoadTests(const std::vector<std::basic_string<PATH_CHAR_TYPE>>& input_paths
                const std::vector<std::basic_string<PATH_CHAR_TYPE>>& whitelisted_test_cases,
                double default_per_sample_tolerance, double default_relative_per_sample_tolerance,
                const std::unordered_set<std::basic_string<ORTCHAR_T>>& disabled_tests,
-               const std::function<void(ITestCase*)>& process_function) {
+               const std::function<void(std::unique_ptr<ITestCase>)>& process_function) {
   std::vector<std::basic_string<PATH_CHAR_TYPE>> paths(input_paths);
   while (!paths.empty()) {
     std::basic_string<PATH_CHAR_TYPE> node_data_root_path = paths.back();
@@ -273,22 +282,31 @@ void LoadTests(const std::vector<std::basic_string<PATH_CHAR_TYPE>>& input_paths
 
       std::basic_string<PATH_CHAR_TYPE> p = ConcatPathComponent<PATH_CHAR_TYPE>(node_data_root_path, filename_str);
 
-      ITestCase* l = CreateOnnxTestCase(ToMBString(test_case_name), TestModelInfo::LoadOnnxModel(p.c_str()),
-                                        default_per_sample_tolerance, default_relative_per_sample_tolerance);
-      process_function(l);
+      std::unique_ptr<TestModelInfo> model_info(TestModelInfo::LoadOnnxModel(p.c_str()));
+      std::unique_ptr<ITestCase> l = CreateOnnxTestCase(ToMBString(test_case_name), std::move(model_info),
+                                                        default_per_sample_tolerance,
+                                                        default_relative_per_sample_tolerance);
+      process_function(std::move(l));
       return true;
     });
   }
 }
 
 SeqTestRunner::SeqTestRunner(OrtSession* session1,
-                             ITestCase* c, size_t repeat_count,
-                             TestCaseCallBack on_finished1) : DataRunner(session1, c->GetTestCaseName(), c, on_finished1), repeat_count_(repeat_count) {
+                             const ITestCase& c, size_t repeat_count,
+                             TestCaseCallBack on_finished1)
+    : DataRunner(session1, c.GetTestCaseName(), c, on_finished1), repeat_count_(repeat_count) {
 }
 
-DataRunner::DataRunner(OrtSession* session1, const std::string& test_case_name1, ITestCase* c, TestCaseCallBack on_finished1) : test_case_name_(test_case_name1), c_(c), session(session1), on_finished(on_finished1), default_allocator(onnxruntime::make_unique<MockedOrtAllocator>()) {
-  std::string s = c->GetNodeName();
-  result = std::make_shared<TestCaseResult>(c->GetDataCount(), EXECUTE_RESULT::UNKNOWN_ERROR, s);
+DataRunner::DataRunner(OrtSession* session1, const std::string& test_case_name1, const ITestCase& c,
+                       TestCaseCallBack on_finished1)
+    : test_case_name_(test_case_name1),
+      c_(c),
+      session(session1),
+      on_finished(on_finished1),
+      default_allocator(onnxruntime::make_unique<MockedOrtAllocator>()) {
+  std::string s = c_.GetNodeName();
+  result = std::make_shared<TestCaseResult>(c_.GetDataCount(), EXECUTE_RESULT::UNKNOWN_ERROR, s);
   SetTimeSpecToZero(&spent_time_);
 }
 
@@ -302,7 +320,7 @@ void DataRunner::RunTask(size_t task_id, ORT_CALLBACK_INSTANCE pci, bool store_r
     res = RunTaskImpl(task_id);
   } catch (std::exception& ex) {
     res = EXECUTE_RESULT::WITH_EXCEPTION;
-    LOGS_DEFAULT(ERROR) << c_->GetTestCaseName() << ":" << ex.what();
+    LOGS_DEFAULT(ERROR) << c_.GetTestCaseName() << ":" << ex.what();
   }
   if (store_result) {
     result->SetResult(task_id, res);
@@ -313,7 +331,7 @@ void DataRunner::RunTask(size_t task_id, ORT_CALLBACK_INSTANCE pci, bool store_r
 EXECUTE_RESULT DataRunner::RunTaskImpl(size_t task_id) {
   onnxruntime::test::HeapBuffer holder;
   std::unordered_map<std::string, OrtValue*> feeds;
-  c_->LoadTestData(task_id, holder, feeds, true);
+  c_.LoadTestData(task_id, holder, feeds, true);
 
   // Create output feed
   size_t output_count = 0;
@@ -358,22 +376,22 @@ EXECUTE_RESULT DataRunner::RunTaskImpl(size_t task_id) {
   double relative_per_sample_tolerance;
   bool post_procesing;
   Status status;
-  if (!(status = c_->GetPerSampleTolerance(&per_sample_tolerance)).IsOK()) {
+  if (!(status = c_.GetPerSampleTolerance(&per_sample_tolerance)).IsOK()) {
     LOGS_DEFAULT(ERROR) << status.ErrorMessage() << "\n";
     return StatusCodeToExecuteResult(status.Code());
   }
-  if (!(status = c_->GetRelativePerSampleTolerance(&relative_per_sample_tolerance)).IsOK()) {
+  if (!(status = c_.GetRelativePerSampleTolerance(&relative_per_sample_tolerance)).IsOK()) {
     LOGS_DEFAULT(ERROR) << status.ErrorMessage() << "\n";
     return StatusCodeToExecuteResult(status.Code());
   }
-  if (!(status = c_->GetPostProcessing(&post_procesing)).IsOK()) {
+  if (!(status = c_.GetPostProcessing(&post_procesing)).IsOK()) {
     LOGS_DEFAULT(ERROR) << status.ErrorMessage() << "\n";
     return StatusCodeToExecuteResult(status.Code());
   }
 
   //TODO: if there are no output value files, just skip the validation
   std::unordered_map<std::string, OrtValue*> expected_output_values;
-  c_->LoadTestData(task_id, holder, expected_output_values, false);
+  c_.LoadTestData(task_id, holder, expected_output_values, false);
 
   std::unordered_map<std::string, OrtValue*> name_fetch_output_map;
   std::unordered_map<std::string, const ONNX_NAMESPACE::ValueInfoProto*> name_output_value_info_proto;
@@ -381,7 +399,7 @@ EXECUTE_RESULT DataRunner::RunTaskImpl(size_t task_id) {
   for (auto& output_name : output_names) {
     // p_fetches is filled in the order of output_names.
     name_fetch_output_map[output_name] = output_values.Get(i);
-    const ONNX_NAMESPACE::ValueInfoProto* infoProto = c_->GetOutputInfoFromModel(i);
+    const ONNX_NAMESPACE::ValueInfoProto* infoProto = c_.GetOutputInfoFromModel(i);
     if (infoProto != nullptr) name_output_value_info_proto.insert(std::make_pair(infoProto->name(), infoProto));
     i++;
   }
@@ -454,44 +472,49 @@ EXECUTE_RESULT DataRunner::RunTaskImpl(size_t task_id) {
 }
 
 void SeqTestRunner::Start(ORT_CALLBACK_INSTANCE pci, size_t) {
-  const size_t data_count = c_->GetDataCount();
+  const size_t data_count = c_.GetDataCount();
   for (size_t idx_repeat = 0; idx_repeat != repeat_count_; ++idx_repeat)
     for (size_t idx_data = 0; idx_data != data_count; ++idx_data) {
       RunTask(idx_data, nullptr, idx_repeat == 0);
     }
-  finish(pci);
+  Finish(pci);
 }
 
-void RunSingleTestCase(ITestCase* info, Ort::Env& env, const Ort::SessionOptions& sf, size_t concurrent_runs, size_t repeat_count, PThreadPool tpool, ORT_CALLBACK_INSTANCE pci, TestCaseCallBack on_finished) {
-
+void RunSingleTestCase(const ITestCase& info, Ort::Env& env, const Ort::SessionOptions& sf,
+                       size_t concurrent_runs, size_t repeat_count, PThreadPool tpool,
+                       ORT_CALLBACK_INSTANCE pci, TestCaseCallBack on_finished) {
   std::shared_ptr<TestCaseResult> ret;
-  size_t data_count = info->GetDataCount();
+  size_t data_count = info.GetDataCount();
   try {
-    DataRunner* r = nullptr;
-    std::string node_name = info->GetNodeName();
+    std::unique_ptr<DataRunner> r;
+    std::string node_name = info.GetNodeName();
     auto sf2 = sf.Clone();
-    sf2.SetLogId(info->GetTestCaseName().c_str());
-    Ort::Session session_object{env, info->GetModelUrl(), sf2};
-    LOGF_DEFAULT(INFO, "testing %s\n", info->GetTestCaseName().c_str());
+    sf2.SetLogId(info.GetTestCaseName().c_str());
+    Ort::Session session_object{env, info.GetModelUrl(), sf2};
+    LOGF_DEFAULT(INFO, "testing %s\n", info.GetTestCaseName().c_str());
     //temp hack. Because we have no resource control. We may not have enough memory to run this test in parallel
-    if (info->GetTestCaseName() == "coreml_FNS-Candy_ImageNet")
+    if (info.GetTestCaseName() == "coreml_FNS-Candy_ImageNet")
       concurrent_runs = 1;
     if (concurrent_runs > 1 && data_count > 1) {
-      r = new PTestRunner(session_object.release(), info, tpool, on_finished);
+      r.reset(new PTestRunner(session_object.release(), info, tpool, on_finished));
     } else {
-      r = new SeqTestRunner(session_object.release(), info, repeat_count, on_finished);
+      r.reset(new SeqTestRunner(session_object.release(), info, repeat_count, on_finished));
     }
     r->Start(pci, concurrent_runs);
+
+    // DataRunner::Finish will delete itself, so now that we know everything has started without any exceptions
+    // we can release it from the unique_ptr
+    r.release();
     return;
   } catch (const Ort::Exception& ex) {
     if (ex.GetOrtErrorCode() != ORT_NOT_IMPLEMENTED)
       throw;
 
-    LOGF_DEFAULT(ERROR, "Test %s failed:%s", info->GetTestCaseName().c_str(), ex.what());
+    LOGF_DEFAULT(ERROR, "Test %s failed:%s", info.GetTestCaseName().c_str(), ex.what());
     std::string node_name;
     ret = std::make_shared<TestCaseResult>(data_count, EXECUTE_RESULT::NOT_SUPPORT, "");
   } catch (onnxruntime::NotImplementedException& ex) {
-    LOGF_DEFAULT(ERROR, "Test %s failed:%s", info->GetTestCaseName().c_str(), ex.what());
+    LOGF_DEFAULT(ERROR, "Test %s failed:%s", info.GetTestCaseName().c_str(), ex.what());
     std::string node_name;
     ret = std::make_shared<TestCaseResult>(data_count, EXECUTE_RESULT::NOT_SUPPORT, "");
   }

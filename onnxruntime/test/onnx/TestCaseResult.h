@@ -25,8 +25,9 @@ enum class EXECUTE_RESULT {
 
 class TestCaseResult {
  public:
-  TestCaseResult(size_t count, EXECUTE_RESULT result, const std::string& node_name1) : node_name(node_name1), excution_result_(count, result) {
-    ::onnxruntime::SetTimeSpecToZero(&spent_time_);
+  TestCaseResult(size_t count, EXECUTE_RESULT result, const std::string& node_name1)
+      : node_name(node_name1), excution_result_(count, result) {
+    onnxruntime::SetTimeSpecToZero(&spent_time_);
   }
 
   void SetResult(size_t task_id, EXECUTE_RESULT r);
@@ -36,12 +37,12 @@ class TestCaseResult {
   }
 
   //Time spent in Session::Run. It only make sense when SeqTestRunner was used
-  ::onnxruntime::TIME_SPEC GetSpentTime() const {
+  onnxruntime::TIME_SPEC GetSpentTime() const {
     return spent_time_;
   }
 
   //Time spent in Session::Run. It only make sense when SeqTestRunner was used
-  void SetSpentTime(const ::onnxruntime::TIME_SPEC& input) const {
+  void SetSpentTime(const onnxruntime::TIME_SPEC& input) const {
     memcpy((void*)&spent_time_, &input, sizeof(input));
   }
 
@@ -49,6 +50,6 @@ class TestCaseResult {
   const std::string node_name;
 
  private:
-  ::onnxruntime::TIME_SPEC spent_time_;
+  onnxruntime::TIME_SPEC spent_time_;
   std::vector<EXECUTE_RESULT> excution_result_;
 };
