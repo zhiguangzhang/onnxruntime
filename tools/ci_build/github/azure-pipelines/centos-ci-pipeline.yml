@@ -1,5 +1,7 @@
 jobs:
 - job: linux_centos_ci
+  workspace:
+    clean: all
   timeoutInMinutes:  60
   pool: 'Linux-CPU'
   strategy:
