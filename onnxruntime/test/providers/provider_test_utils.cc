@@ -766,8 +766,8 @@ void OpTester::Run(
           execution_provider = DefaultDnnlExecutionProvider();
         else if (provider_type == onnxruntime::kNGraphExecutionProvider)
           execution_provider = DefaultNGraphExecutionProvider();
-	      else if (provider_type == onnxruntime::kOpenVINOExecutionProvider)
-	        execution_provider = DefaultOpenVINOExecutionProvider();
+        else if (provider_type == onnxruntime::kOpenVINOExecutionProvider)
+          execution_provider = DefaultOpenVINOExecutionProvider();
         else if (provider_type == onnxruntime::kNupharExecutionProvider)
           execution_provider = DefaultNupharExecutionProvider();
         else if (provider_type == onnxruntime::kTensorrtExecutionProvider)
@@ -790,17 +790,15 @@ void OpTester::Run(
           // if node is not registered for the provider, skip
           node.SetExecutionProviderType(provider_type);
           if (provider_type == onnxruntime::kNGraphExecutionProvider ||
-	            provider_type == onnxruntime::kOpenVINOExecutionProvider ||
+              provider_type == onnxruntime::kOpenVINOExecutionProvider ||
               provider_type == onnxruntime::kTensorrtExecutionProvider ||
               provider_type == onnxruntime::kNupharExecutionProvider)
             continue;
           auto reg = execution_provider->GetKernelRegistry();
-          const KernelCreateInfo* kci =
-              reg->TryFindKernel(node, execution_provider->Type());
-          if (!kci) {
+          if (!reg->HasImplementationOf(node, execution_provider->Type())) {
             valid = false;
             for (auto& custom_session_registry : custom_session_registries_) {
-              if (custom_session_registry->GetKernelRegistry()->TryFindKernel(
+              if (custom_session_registry->GetKernelRegistry()->HasImplementationOf(
                       node, execution_provider->Type())) {
                 valid = true;
                 break;

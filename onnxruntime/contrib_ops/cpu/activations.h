@@ -22,7 +22,22 @@ class ScaledTanh final : public OpKernel {
   Status Compute(OpKernelContext* context) const override {
     const Tensor* X = context->Input<Tensor>(0);
     Tensor* Y = context->Output(0, X->Shape());
-    EIGEN_Y = (T)alpha_ * (EIGEN_X * (T)beta_).tanh();
+    T alpha = static_cast<T>(alpha_);
+    T beta = static_cast<T>(beta_);
+    concurrency::ThreadPool* tp = context->GetOperatorThreadPool();
+    const int64_t input_size = X->Shape().Size();
+    std::ptrdiff_t batch_size = static_cast<std::ptrdiff_t>(input_size);
+    //The cost comes from microbenchmark(manual tuning).
+    const double cost = 5.0;
+    const T* data = X->template Data<T>();
+    T* output = Y->template MutableData<T>();
+    concurrency::ThreadPool::TryParallelFor(tp, batch_size, cost, [alpha, beta, data, output](ptrdiff_t first, ptrdiff_t last) {
+      ptrdiff_t len = last - first;
+      T* output_ptr = output + first;
+      onnxruntime::ConstEigenVectorArrayMap<T> xm(data + first, len);
+      onnxruntime::EigenVectorArrayMap<T> ym(output_ptr, len);
+      ym = alpha * (xm * beta).tanh();
+    });
     return Status::OK();
   }
 
