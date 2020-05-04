@@ -424,6 +424,8 @@ class OnnxTestCase : public ITestCase {
                     bool is_input) override;
 
   std::pair<onnxruntime::COMPARE_RESULT, std::string> CustomComparator(OrtValue actual_output, OrtValue expected_output) override {
+    ONNX_UNUSED_PARAMETER(actual_output);
+    ONNX_UNUSED_PARAMETER(expected_output);
     ORT_THROW("Test cases of OnnxTestCase type do not have custom comparision defined.");
   }
 };
@@ -663,8 +665,8 @@ OnnxTestCase::OnnxTestCase(const std::string& test_case_name, _In_ TestModelInfo
 
 class OnnxDropoutTestCase : public OnnxTestCase {
  public:
-  OnnxDropoutTestCase::OnnxDropoutTestCase(const std::string& test_case_name, _In_ TestModelInfo* model,
-                                           double default_per_sample_tolerance, double default_relative_per_sample_tolerance);
+  OnnxDropoutTestCase(const std::string& test_case_name, _In_ TestModelInfo* model, double default_per_sample_tolerance,
+                      double default_relative_per_sample_tolerance);
 
   bool UseCustomComparision() override;
 
@@ -762,4 +764,3 @@ ITestCase* CreateOnnxDropoutTestCase(const std::string& test_case_name, TestMode
                                      double default_per_sample_tolerance, double default_relative_per_sample_tolerance) {
   return new OnnxDropoutTestCase(test_case_name, model, default_per_sample_tolerance, default_relative_per_sample_tolerance);
 }
-
