@@ -15,6 +15,7 @@
 #include "core/platform/path_lib.h"
 #include "core/session/onnxruntime_cxx_api.h"
 #include "core/framework/allocator.h"
+#include "test/compare_ortvalue.h"
 #include "re2/re2.h"
 #include <sstream>
 #include <map>
@@ -22,7 +23,6 @@
 #include "OrtValueList.h"
 
 #include "pb_helper.h"
-#include <test\compare_ortvalue.h>
 
 using namespace onnxruntime;
 using namespace onnxruntime::common;
