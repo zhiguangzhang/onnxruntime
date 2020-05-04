@@ -10,7 +10,7 @@
 #include <core/platform/path_lib.h>
 #include <core/session/onnxruntime_cxx_api.h>
 #include "heap_buffer.h"
-#include <test\compare_ortvalue.h>
+#include <test/compare_ortvalue.h>
 
 namespace ONNX_NAMESPACE {
 class ValueInfoProto;
